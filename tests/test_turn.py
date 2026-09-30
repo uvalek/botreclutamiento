@@ -5,7 +5,6 @@ import pytest
 from app import llm, memory, turn
 from app import vacante as V
 from app.agents import redactor
-from app.config import get_settings
 from app.flow import engine as E
 from app.tools import cal
 
