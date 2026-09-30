@@ -360,3 +360,36 @@ async def test_correo_rechazado_reintenta_con_interno(fake, monkeypatch):
 )
 def test_extract_email(text, expected):
     assert E.extract_email(text) == expected
+
+
+URL = "https://maps.app.goo.gl/VRhgSkNnoeLRvzjn6"
+
+
+def test_ubicacion_al_agendar_y_al_pedirla():
+    conf = E.Conf(slots=CONF.slots, location_url=URL)
+    s = None
+    for m in ["hola", "1", "Juan Pérez", "27", "Apizaco", "Matutino", "Sí, todos",
+              "Más de 6 meses", "1"]:
+        s, _ = E.handle_text(s, m, conf)
+    s, actions = E.handle_text(s, "Sí, confirmar", conf)
+    fixed = [a for a in actions if isinstance(a, E.Fixed)]
+    assert fixed and URL in fixed[0].text
+    s, actions = E.handle_text(s, "¿dónde queda?", conf)
+    assert URL in texts(actions)[0]
+
+
+async def test_redactor_no_toca_la_ubicacion(fake, monkeypatch):
+    from app import processor
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "location_url", URL)
+    conf = processor.build_conf()
+    s = None
+    for m in ["hola", "1", "Juan Pérez", "27", "Apizaco", "Matutino", "Sí, todos",
+              "Más de 6 meses", "1"]:
+        s, _ = E.handle_text(s, m, conf)
+    fake.redactor = {"burbujas": ["¡Listo, Juan! Tu entrevista quedó para el **Mié 30 sep 9:00** 🙌"]}
+    r = await turn.run(s, turn.Batch(conversation_id=7, status="pending", texts=["sí confirmo"]), conf)
+    msgs = texts(r.actions)
+    assert msgs[0].startswith("¡Listo, Juan!")
+    assert any(URL in m for m in msgs[1:])

@@ -31,7 +31,8 @@ _TOPICS: dict[str, list[str]] = {
     ],
     "ubicacion": [
         "donde", "en donde", "ubicacion", "direccion", "donde queda", "donde esta",
-        "como llegar", "planta",
+        "como llegar", "planta", "mapa", "maps", "google maps", "como llego",
+        "mandame la ubicacion", "pasame la ubicacion", "localizacion",
     ],
     "llevar": [
         "que llevo", "que debo llevar", "que tengo que llevar", "que necesito llevar",
@@ -69,9 +70,20 @@ def looks_like_question(text: str) -> bool:
     return n.startswith(_QUESTION_STARTS)
 
 
-def answer(text: str) -> str | None:
+def answer(text: str, location_url: str | None = None) -> str | None:
     """Respuesta para una pregunta frecuente, o None si no es una."""
     topics = detect_topics(text)
-    if topics:
-        return "\n".join(vacante.FAQ_RESPUESTAS[t] for t in topics[:3])
-    return None
+    if not topics:
+        return None
+    parts = [vacante.FAQ_RESPUESTAS[t] for t in topics[:3]]
+    if "ubicacion" in topics:
+        url = location_url if location_url is not None else _default_location_url()
+        if url:
+            parts.append(vacante.UBICACION_ENLACE.format(url=url))
+    return "\n".join(parts)
+
+
+def _default_location_url() -> str:
+    from app.config import get_settings
+
+    return get_settings().location_url

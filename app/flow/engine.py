@@ -40,6 +40,12 @@ class Send:
 
 
 @dataclass
+class Fixed(Send):
+    """Mensaje que se manda tal cual (la IA no lo reescribe): p. ej. el enlace
+    de la ubicación."""
+
+
+@dataclass
 class SendOptions:
     text: str
     options: list[str]
@@ -127,6 +133,7 @@ class Conf:
     reminder_delay: int = 120
     followup_delay: int = 180
     demo: bool = True
+    location_url: str = ""
 
 
 # Pasos que hacen una pregunta al candidato.
@@ -689,7 +696,7 @@ def _not_matched(s: Session, text: str, conf: Conf) -> Result:
     saludo, pregunta desconocida o "no entendí" (2 veces → oferta de asesor)."""
     if looks_like_sensitive_id(text):
         return s, ask(s, conf, reask=True, prefix=V.PRIVACIDAD)
-    ans = faq.answer(text)
+    ans = faq.answer(text, conf.location_url)
     if ans:
         return s, ask(s, conf, reask=True, prefix=ans)
     if is_greeting(text):
@@ -744,14 +751,14 @@ def _h_info(s: Session, text: str, conf: Conf) -> Result:
 def _h_no_interesado(s: Session, text: str, conf: Conf) -> Result:
     if match_option(text, V.OPC_INFO[:1], {0: _APLICAR}) == 0:
         return _goto(s, "NOMBRE", conf)
-    ans = faq.answer(text)
+    ans = faq.answer(text, conf.location_url)
     if ans:
         return s, [Send(ans), Send(V.NO_INTERESADO_OTRO_TEXTO)]
     return s, [Send(V.NO_INTERESADO_OTRO_TEXTO)]
 
 
 def _h_nombre(s: Session, text: str, conf: Conf) -> Result:
-    if looks_like_sensitive_id(text) or faq.answer(text) or is_greeting(text):
+    if looks_like_sensitive_id(text) or faq.answer(text, conf.location_url) or is_greeting(text):
         return _not_matched(s, text, conf)
     name = parse_name(text)
     if name:
@@ -856,8 +863,12 @@ def _h_confirmacion(s: Session, text: str, conf: Conf) -> Result:
     if conf.demo:
         msg += "\n" + V.AGENDADO_DEMO.format(espera=_espera_legible(conf.reminder_delay))
     context = "📅 Reagendó su entrevista." if reagendo else "📅 Entrevista agendada."
+    ubicacion: list[Action] = (
+        [Fixed(V.UBICACION_ENLACE.format(url=conf.location_url))] if conf.location_url else []
+    )
     return s, [
         Send(msg),
+        *ubicacion,
         CancelJobs([SEGUIMIENTO, RECORDATORIO]),
         Schedule(RECORDATORIO, conf.reminder_delay),
         Labels(add=[V.ETIQUETA_AGENDADA]),
@@ -911,7 +922,7 @@ def _passive(s: Session, text: str, conf: Conf, template: str) -> Result:
         return _reagendar(s, conf)
     if looks_like_sensitive_id(text):
         return s, [Send(V.PRIVACIDAD)]
-    ans = faq.answer(text)
+    ans = faq.answer(text, conf.location_url)
     if ans:
         return s, [Send(ans)]
     msg = template.format(horario=s.data.get("horario", ""))
@@ -991,7 +1002,7 @@ def quick_match(s: Session | None, text: str, conf: Conf) -> bool:
     if s.state == "NOMBRE":
         return (
             parse_name(text) is not None
-            and not faq.answer(text)
+            and not faq.answer(text, conf.location_url)
             and not is_greeting(text)
             and not faq.looks_like_question(text)
         )

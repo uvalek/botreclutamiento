@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     followup_delay_seconds: int = 180
     # Muestra las líneas "(en esta demo...)".
     demo_mode: bool = True
+    # Enlace de Google Maps del lugar de las entrevistas. Se manda cuando el
+    # candidato pide la ubicación y al agendar. Vacío = no se manda.
+    location_url: str = "https://maps.app.goo.gl/VRhgSkNnoeLRvzjn6"
 
     # --- IA (v2) ----------------------------------------------------------
     # Sin OPENAI_API_KEY el bot funciona igual que la v1 (textos fijos).

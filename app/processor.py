@@ -54,6 +54,7 @@ def build_conf() -> engine.Conf:
         reminder_delay=s.reminder_delay_seconds,
         followup_delay=s.followup_delay_seconds,
         demo=s.demo_mode,
+        location_url=s.location_url,
     )
 
 

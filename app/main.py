@@ -29,7 +29,7 @@ log = structlog.get_logger(__name__)
 
 # Se sube a mano en cada cambio importante para confirmar que EasyPanel
 # redeployó (GET /version).
-_VERSION = "v2.3-correo-opcional-2026-09-29"
+_VERSION = "v2.4-ubicacion-2026-09-29"
 
 
 @asynccontextmanager

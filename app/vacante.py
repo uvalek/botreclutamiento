@@ -161,6 +161,8 @@ SEGUIMIENTO_CON_NOMBRE = (
 )
 SEGUIMIENTO_SIN_NOMBRE = "¿Sigues ahí? 🙂 Tu solicitud quedó a medias.\nCuando quieras, seguimos:"
 
+UBICACION_ENLACE = "📍 Aquí tienes la ubicación para llegar:\n{url}"
+
 # ---------------------------------------------------------------------------
 # Preguntas frecuentes: respuestas fijas (nunca se generan)
 # ---------------------------------------------------------------------------

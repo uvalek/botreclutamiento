@@ -20,6 +20,7 @@ import structlog
 
 from app import llm, media, memory
 from app.agents import interprete, m1_preguntas, redactor
+from app.config import get_settings
 from app.flow import engine as E
 from app.flow import faq
 from app.flow.matcher import is_reset
@@ -140,8 +141,12 @@ async def _book_if_needed(
     return E.ask(s, conf, reask=True, prefix=_SLOT_TAKEN)
 
 
+def _rewritable(actions: list[E.Action]) -> list[E.Action]:
+    return [a for a in _messages(actions) if not isinstance(a, E.Fixed)]
+
+
 def _should_humanize(before: str | None, s: E.Session, actions: list[E.Action]) -> bool:
-    msgs = _messages(actions)
+    msgs = _rewritable(actions)
     if not msgs:
         return False
     if before in (None, "INICIO") or s.state == "ASESOR":
@@ -157,9 +162,12 @@ def _should_humanize(before: str | None, s: E.Session, actions: list[E.Action]) 
 async def _humanize(
     s: E.Session, actions: list[E.Action], user_text: str, history: list[dict[str, str]], chat_id: str
 ) -> list[E.Action] | None:
-    msgs = _messages(actions)
+    msgs = _rewritable(actions)
     options = msgs[-1].options if isinstance(msgs[-1], E.SendOptions) else []
-    must_keep = [s.data.get("nombre", ""), s.data.get("horario", ""), s.data.get("correo", "")]
+    must_keep = [
+        s.data.get("nombre", ""), s.data.get("horario", ""), s.data.get("correo", ""),
+        get_settings().location_url,
+    ]
     bubbles = await redactor.rewrite(
         [m.text for m in msgs], options, user_text, history, must_keep, chat_id
     )
@@ -167,7 +175,9 @@ async def _humanize(
         return None
     new_msgs: list[E.Action] = [E.Send(b) for b in bubbles[:-1]]
     new_msgs.append(E.SendOptions(bubbles[-1], list(options)) if options else E.Send(bubbles[-1]))
-    return new_msgs + [a for a in actions if not isinstance(a, (E.Send, E.SendOptions))]
+    fixed = [a for a in actions if isinstance(a, E.Fixed)]
+    others = [a for a in actions if not isinstance(a, (E.Send, E.SendOptions))]
+    return new_msgs + fixed + others
 
 
 async def run(s: E.Session | None, batch: Batch, conf: E.Conf) -> TurnResult:
