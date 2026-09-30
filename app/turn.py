@@ -80,8 +80,10 @@ async def _refresh_slots(s: E.Session) -> None:
     if not cal.ready():
         return
     age = time.time() - (s.offered_at or 0)
-    stale = age > (900 if s.state == "HORARIO" else 120)
-    if s.state not in _PRE_SLOTS | {"HORARIO"} or not stale:
+    stale = age > (900 if s.state in ("HORARIO", "HORA") else 120)
+    if any("day" not in x for x in s.offered):
+        stale = True  # formato anterior de horarios: volver a consultar
+    if s.state not in _PRE_SLOTS | {"HORARIO", "HORA"} or not stale:
         return
     slots = await cal.get_slots()
     if slots is None:
@@ -120,6 +122,7 @@ async def _book_if_needed(
     s.state = "HORARIO"
     s.data.pop("horario", None)
     s.data.pop("horario_iso", None)
+    s.data.pop("dia", None)
     s.data["asistencia"] = ""
     s.offered_at = 0
     await _refresh_slots(s)

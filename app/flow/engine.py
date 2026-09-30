@@ -132,12 +132,12 @@ class Conf:
 # Pasos que hacen una pregunta al candidato.
 QUESTION_STATES = {
     "BIENVENIDA", "INFO", "NOMBRE", "EDAD", "MUNICIPIO", "TURNO", "DOCUMENTOS",
-    "EXPERIENCIA", "HORARIO", "CONFIRMACION", "RECORDATORIO", "OFRECER_ASESOR",
+    "EXPERIENCIA", "HORARIO", "HORA", "CONFIRMACION", "RECORDATORIO", "OFRECER_ASESOR",
 }
 # Pasos de la solicitud: si el candidato deja de responder, se manda seguimiento.
 SOLICITUD_STATES = {
     "NOMBRE", "EDAD", "MUNICIPIO", "TURNO", "DOCUMENTOS", "EXPERIENCIA",
-    "HORARIO", "CONFIRMACION",
+    "HORARIO", "HORA", "CONFIRMACION",
 }
 
 Result = tuple[Session, list[Action]]
@@ -414,7 +414,8 @@ def _options_for(s: Session, conf: Conf) -> list[str] | None:
         "TURNO": V.OPC_TURNO,
         "DOCUMENTOS": V.OPC_DOCUMENTOS,
         "EXPERIENCIA": V.OPC_EXPERIENCIA,
-        "HORARIO": slot_titles(s, conf),
+        "HORARIO": [d["day_title"] for d in cal_days(s)] if s.offered else slot_titles(s, conf),
+        "HORA": [x["time"] for x in suggestions(day_slots(s))],
         "CONFIRMACION": V.OPC_CONFIRMACION,
         "RECORDATORIO": V.OPC_RECORDATORIO,
         "OFRECER_ASESOR": V.OPC_OFRECER_ASESOR,
@@ -423,7 +424,7 @@ def _options_for(s: Session, conf: Conf) -> list[str] | None:
 
 def _synonyms_for(s: Session, conf: Conf) -> dict[int, list[str]]:
     if s.state == "HORARIO":
-        return slot_synonyms(slot_titles(s, conf))
+        return slot_synonyms(_options_for(s, conf) or [])
     return SYN.get(s.state, {})
 
 
@@ -450,7 +451,15 @@ def _question_text(s: Session, conf: Conf, reask: bool) -> str:
     if st == "EXPERIENCIA":
         return V.EXPERIENCIA_PREGUNTA
     if st == "HORARIO":
+        if s.offered:
+            if s.reagenda and not reask:
+                return V.DIA_PREGUNTA_REAGENDA
+            return V.DIA_PREGUNTA
         return V.HORARIO_PREGUNTA_REAGENDA if (s.reagenda and not reask) else V.HORARIO_PREGUNTA
+    if st == "HORA":
+        slots = day_slots(s)
+        dia = slots[0]["day_long"] if slots else ""
+        return V.HORA_PREGUNTA.format(dia=dia, rangos=ranges_text(slots))
     if st == "CONFIRMACION":
         return V.CONFIRMACION_PREGUNTA.format(
             nombre=d.get("nombre", ""), horario=d.get("horario", "")
@@ -806,6 +815,8 @@ def _h_experiencia(s: Session, text: str, conf: Conf) -> Result:
 
 
 def _h_horario(s: Session, text: str, conf: Conf) -> Result:
+    if s.offered:
+        return _h_dia(s, text, conf)
     idx = _match(s, text, conf)
     if idx is None:
         return _not_matched(s, text, conf)
@@ -982,6 +993,8 @@ def quick_match(s: Session | None, text: str, conf: Conf) -> bool:
         )
     if s.state == "MUNICIPIO":
         return _match_municipio(text) is not None
+    if s.state == "HORA":
+        return resolve_hora(s, text)[0] in ("slot", "busy", "otro_dia")
     if s.state in ("AGENDADO", "CONFIRMADO", "NO_INTERESADO"):
         return False
     options = _options_for(s, conf)
@@ -991,5 +1004,208 @@ def quick_match(s: Session | None, text: str, conf: Conf) -> bool:
 
 
 def current_question(s: Session, conf: Conf) -> tuple[str, list[str]]:
-    """Pregunta y opciones del paso actual (para la IA)."""
+    """Pregunta y opciones del paso actual (para la IA). En HORA se le pasan
+    todas las horas libres del día, no solo las 3 sugeridas."""
+    if s.state == "HORA":
+        return _question_text(s, conf, reask=True), [x["time"] for x in day_slots(s)]
     return _question_text(s, conf, reask=True), list(_options_for(s, conf) or [])
+
+
+# ---------------------------------------------------------------------------
+# v2: agenda en dos pasos con Cal.com (día → hora, con rangos libres)
+# ---------------------------------------------------------------------------
+
+
+def cal_days(s: Session) -> list[dict[str, Any]]:
+    """Días con lugar, en orden: [{day, day_title, day_long}]."""
+    seen: dict[str, dict[str, Any]] = {}
+    for x in s.offered:
+        if x.get("day") and x["day"] not in seen:
+            seen[x["day"]] = {k: x[k] for k in ("day", "day_title", "day_long")}
+    return list(seen.values())
+
+
+def day_slots(s: Session, day: str | None = None) -> list[dict[str, Any]]:
+    day = day or s.data.get("dia")
+    return [x for x in s.offered if x.get("day") == day]
+
+
+def _step(slots: list[dict[str, Any]]) -> int:
+    diffs = [b["minutes"] - a["minutes"] for a, b in zip(slots, slots[1:], strict=False)]
+    diffs = [d for d in diffs if d > 0]
+    return min(diffs) if diffs else 30
+
+
+def ranges(slots: list[dict[str, Any]]) -> list[tuple[int, int]]:
+    """Junta horarios seguidos: 9:00, 9:30 … 11:30 → (9:00, 12:00)."""
+    if not slots:
+        return []
+    step = _step(slots)
+    out: list[tuple[int, int]] = []
+    start = prev = slots[0]["minutes"]
+    for x in slots[1:]:
+        m = x["minutes"]
+        if m - prev != step:
+            out.append((start, prev + step))
+            start = m
+        prev = m
+    out.append((start, prev + step))
+    return out
+
+
+def ranges_text(slots: list[dict[str, Any]]) -> str:
+    from app.tools.cal import fmt_time
+
+    parts = [f"**de {fmt_time(a)} a {fmt_time(b)}**" for a, b in ranges(slots)]
+    if len(parts) <= 1:
+        return "".join(parts)
+    return ", ".join(parts[:-1]) + " y " + parts[-1]
+
+
+def suggestions(slots: list[dict[str, Any]], n: int = 3) -> list[dict[str, Any]]:
+    """Hasta 3 horas sugeridas para botones: el inicio de cada rango y, si
+    sobran lugares, horas repartidas en el día."""
+    if not slots:
+        return []
+    by_min = {x["minutes"]: x for x in slots}
+    picks: list[dict[str, Any]] = [by_min[a] for a, _ in ranges(slots) if a in by_min][:n]
+    if len(picks) < n:
+        k = len(slots)
+        for i in range(n):
+            cand = slots[round(i * (k - 1) / (n - 1))] if n > 1 else slots[0]
+            if cand not in picks:
+                picks.append(cand)
+            if len(picks) >= n:
+                break
+    return sorted(picks, key=lambda x: x["minutes"])[:n]
+
+
+_WORD_HOURS = {
+    "una": 1, "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5, "seis": 6, "siete": 7,
+    "ocho": 8, "nueve": 9, "diez": 10, "once": 11, "doce": 12,
+}
+_TIME_RE = re.compile(
+    r"\b(\d{1,2}|" + "|".join(_WORD_HOURS) + r")(?:\s(\d{2})\b)?"
+    r"(\s(?:y media|y cuarto|am|a m|pm|p m|hrs|horas|de la manana|de la tarde|de la noche))?"
+)
+_TIME_MARKERS = ("a las ", "a la ", " am", " pm", "a m", "p m", "hrs", "horas", ":", "de la tarde",
+                 "de la manana", "y media", "mediodia")
+
+
+def parse_time(text: str, *, require_marker: bool = False) -> int | None:
+    """'a las 10' → 600 · '10:30 am' → 630 · '3 de la tarde' → 900 · '1' → 780."""
+    raw = sanitize(text).lower()
+    n = normalize(text)
+    if not n:
+        return None
+    if "mediodia" in n or "medio dia" in n:
+        return 12 * 60
+    if require_marker and not any(mk in f" {raw} " or mk in f" {n} " for mk in _TIME_MARKERS):
+        return None
+    for prefix in ("a las ", "a la ", "las ", "la "):
+        if prefix in n:
+            n = n[n.index(prefix) + len(prefix):]
+            break
+    m = _TIME_RE.search(n)
+    if not m:
+        return None
+    hour_raw, mins, suffix = m.group(1), m.group(2), (m.group(3) or "").strip()
+    h = int(hour_raw) if hour_raw.isdigit() else _WORD_HOURS[hour_raw]
+    if h > 23:
+        return None
+    minute = int(mins) if mins else 0
+    if suffix == "y media":
+        minute = 30
+    elif suffix == "y cuarto":
+        minute = 15
+    if minute > 59:
+        return None
+    pm = suffix in ("pm", "p m", "de la tarde", "de la noche") or " tarde" in f" {n}"
+    am = suffix in ("am", "a m", "de la manana")
+    if pm and h < 12:
+        h += 12
+    elif am and h == 12:
+        h = 0
+    elif not am and not pm and 1 <= h <= 7:
+        h += 12  # horario de oficina: "a las 3" = 3 pm
+    return h * 60 + minute
+
+
+_OTRO_DIA = ["otro dia", "cambiar dia", "cambiar de dia", "otra fecha", "otro dia mejor"]
+
+
+def resolve_hora(s: Session, text: str) -> tuple[str, Any]:
+    """Interpreta la hora pedida para el día elegido.
+
+    ("slot", horario) · ("busy", minutos) · ("otro_dia", índice|None) · ("none", None)
+    """
+    slots = day_slots(s)
+    if not slots:
+        return "otro_dia", None
+    n = normalize(text)
+    for x in slots:  # botón exacto
+        if n == normalize(x["time"]):
+            return "slot", x
+    days = cal_days(s)
+    titles = [d["day_title"] for d in days]
+    other = match_option(text, titles, slot_synonyms(titles))
+    if other is not None and days[other]["day"] != s.data.get("dia"):
+        return "otro_dia", other
+    if contains_any(n, _OTRO_DIA):
+        return "otro_dia", None
+    minutes = parse_time(text)
+    if minutes is not None:
+        for x in slots:
+            if x["minutes"] == minutes:
+                return "slot", x
+        return "busy", minutes
+    if contains_any(n, ["manana", "temprano", "en la manana"]):
+        morning = [x for x in slots if x["minutes"] < 12 * 60]
+        if morning:
+            return "slot", morning[0]
+    if contains_any(n, ["tarde", "en la tarde"]):
+        afternoon = [x for x in slots if x["minutes"] >= 12 * 60]
+        if afternoon:
+            return "slot", afternoon[0]
+    return "none", None
+
+
+def _select_slot(s: Session, slot: dict[str, Any], conf: Conf) -> Result:
+    s.data["horario"] = slot["title"]
+    s.data["horario_iso"] = slot["start"]
+    return _goto(s, "CONFIRMACION", conf, attrs={"entrevista_horario": slot["title"]})
+
+
+def _h_dia(s: Session, text: str, conf: Conf) -> Result:
+    days = cal_days(s)
+    if not days:
+        return _not_matched(s, text, conf)
+    idx = _match(s, text, conf)
+    if idx is None:
+        return _not_matched(s, text, conf)
+    s.data["dia"] = days[idx]["day"]
+    # ¿Dijo también la hora? ("el jueves a las 10")
+    minutes = parse_time(text, require_marker=True)
+    if minutes is not None:
+        for x in day_slots(s):
+            if x["minutes"] == minutes:
+                return _select_slot(s, x, conf)
+    return _goto(s, "HORA", conf)
+
+
+def _h_hora(s: Session, text: str, conf: Conf) -> Result:
+    kind, value = resolve_hora(s, text)
+    if kind == "slot":
+        return _select_slot(s, value, conf)
+    if kind == "busy":
+        return s, ask(s, conf, reask=True, prefix=V.HORA_OCUPADA)
+    if kind == "otro_dia":
+        if value is not None:
+            s.data["dia"] = cal_days(s)[value]["day"]
+            return _goto(s, "HORA", conf)
+        s.data.pop("dia", None)
+        return _goto(s, "HORARIO", conf)
+    return _not_matched(s, text, conf)
+
+
+_HANDLERS["HORA"] = _h_hora

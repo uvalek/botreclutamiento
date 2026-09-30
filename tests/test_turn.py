@@ -180,63 +180,105 @@ async def test_reiniciar_nuevo_prospecto(fake):
     assert r.session.state == "BIENVENIDA"
 
 
-async def test_calcom_agenda(fake, monkeypatch):
+def _slots_jueves(busy_minutes=()):
+    from app.tools import cal as C
+
+    out = []
+    for m in range(9 * 60, 17 * 60, 30):  # 9:00 a 16:30
+        if m in busy_minutes:
+            continue
+        h, mm = divmod(m + 6 * 60, 60)  # México = UTC-6
+        out.append(C.enrich(f"2026-10-01T{h:02d}:{mm:02d}:00.000Z"))
+    return out
+
+
+@pytest.fixture
+def calmock(monkeypatch):
     monkeypatch.setattr(cal, "ready", lambda: True)
+    state = {"slots": _slots_jueves(busy_minutes=(12 * 60,)), "booked": {}, "uid": "uid-123"}
 
     async def slots():
-        return [
-            {"start": "2026-10-01T15:00:00Z", "title": "Jue 1 oct 9:00"},
-            {"start": "2026-10-01T18:00:00Z", "title": "Jue 1 oct 12:00"},
-        ]
-
-    booked = {}
+        return state["slots"]
 
     async def book(**kw):
-        booked.update(kw)
-        return "uid-123"
+        state["booked"].update(kw)
+        return state["uid"]
 
     monkeypatch.setattr(cal, "get_slots", slots)
     monkeypatch.setattr(cal, "book", book)
+    return state
+
+
+async def test_calcom_rangos_y_agenda(fake, calmock):
     s = await at_state(["hola", "1", "Juan Pérez", "27", "Apizaco", "Matutino", "Sí, todos"])
     r = await run(s, "Más de 6 meses")
     s = r.session
     assert s.state == "HORARIO"
-    assert [a.options for a in r.actions if isinstance(a, E.SendOptions)][-1] == [
-        "Jue 1 oct 9:00", "Jue 1 oct 12:00"]
-    r = await run(s, "Jue 1 oct 12:00")
-    assert r.session.data["horario_iso"] == "2026-10-01T18:00:00Z"
-    r = await run(r.session, "Sí, confirmar")
+    assert [a.options for a in r.actions if isinstance(a, E.SendOptions)][-1] == ["Jue 1 oct"]
+    r = await run(s, "el jueves")
+    s = r.session
+    assert s.state == "HORA"
+    body = texts(r.actions)[-1]
+    assert "**jueves 1 de octubre**" in body
+    assert "**de 9:00 am a 12:00 pm**" in body and "**de 12:30 pm a 5:00 pm**" in body
+    r = await run(s, "a las 12")
+    assert r.session.state == "HORA" and V.HORA_OCUPADA in texts(r.actions)[0]
+    r = await run(r.session, "a las 3 de la tarde")
+    s = r.session
+    assert s.state == "CONFIRMACION"
+    assert s.data["horario"] == "Jue 1 oct 3:00 pm"
+    r = await run(s, "Sí, confirmar")
     assert r.session.state == "AGENDADO"
     assert r.session.data["cal_booking_uid"] == "uid-123"
-    assert booked["start"] == "2026-10-01T18:00:00Z" and booked["name"] == "Juan Pérez"
+    assert calmock["booked"]["start"] == "2026-10-01T21:00:00.000Z"
 
 
-async def test_calcom_horario_ocupado(fake, monkeypatch):
-    monkeypatch.setattr(cal, "ready", lambda: True)
+async def test_calcom_dia_y_hora_de_una_vez(fake, calmock):
+    s = await at_state(["hola", "1", "Juan Pérez", "27", "Apizaco", "Matutino", "Sí, todos"])
+    r = await run(s, "Más de 6 meses")
+    r = await run(r.session, "el jueves a las 10:30")
+    assert r.session.state == "CONFIRMACION"
+    assert r.session.data["horario"] == "Jue 1 oct 10:30 am"
 
-    async def slots():
-        return [{"start": "2026-10-01T15:00:00Z", "title": "Jue 1 oct 9:00"}]
 
-    async def book(**kw):
-        return None  # se ocupó
-
-    monkeypatch.setattr(cal, "get_slots", slots)
-    monkeypatch.setattr(cal, "book", book)
+async def test_calcom_horario_ocupado_al_confirmar(fake, calmock):
     s = await at_state(["hola", "1", "Juan Pérez", "27", "Apizaco", "Matutino", "Sí, todos"])
     r = await run(s, "Más de 6 meses")
     r = await run(r.session, "1")
+    r = await run(r.session, "9:00 am")
+    calmock["uid"] = None  # alguien lo ganó
     r = await run(r.session, "Sí, confirmar")
     assert r.session.state == "HORARIO"
     assert "se acaba de ocupar" in texts(r.actions)[0]
     assert not any(isinstance(a, E.Schedule) and a.kind == E.RECORDATORIO for a in r.actions)
 
 
-def test_cal_slot_title_y_reparto():
-    from datetime import UTC, datetime
+def test_rangos_y_horas():
+    from app.tools import cal as C
 
-    get_settings()
-    assert cal.slot_title("2026-10-01T15:00:00Z") == "Jue 1 oct 9:00"
-    starts = [f"2026-10-01T{h:02d}:00:00Z" for h in range(15, 23)]
-    picked = cal.pick_slots(starts, per_day=3, max_total=9, now=datetime(2026, 9, 30, tzinfo=UTC))
-    assert len(picked) == 3 and picked[0] == starts[0] and picked[-1] == starts[-1]
+    slots = _slots_jueves(busy_minutes=(12 * 60, 12 * 60 + 30))
+    assert E.ranges(slots) == [(540, 720), (780, 1020)]
+    assert [x["time"] for x in E.suggestions(slots)][0] == "9:00 am"
+    assert C.fmt_time(12 * 60) == "12:00 pm" and C.fmt_time(13 * 60 + 30) == "1:30 pm"
+    assert C.slot_title("2026-10-01T15:00:00Z") == "Jue 1 oct 9:00 am"
     assert cal.normalize_phone("+5212411234567") == "+522411234567"
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("a las 10", 600),
+        ("10:30", 630),
+        ("10:30 am", 630),
+        ("diez y media", 630),
+        ("a las 3 de la tarde", 900),
+        ("3", 900),
+        ("1:00 pm", 780),
+        ("mediodía", 720),
+        ("a las doce", 720),
+        ("como a las 9", 540),
+        ("hola", None),
+    ],
+)
+def test_parse_time(text, expected):
+    assert E.parse_time(text) == expected

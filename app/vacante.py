@@ -85,6 +85,12 @@ CLASIF_FUERA_RUTA = (
 
 HORARIO_PREGUNTA = f"Elige el horario de tu entrevista en la **{LUGAR_ENTREVISTA}**:"
 HORARIO_PREGUNTA_REAGENDA = "Sin problema. Elige tu nuevo horario de entrevista:"
+# Agenda con Cal.com (dos pasos: día → hora)
+DIA_PREGUNTA = f"¿Qué día te acomoda para tu entrevista en la **{LUGAR_ENTREVISTA}**?"
+DIA_PREGUNTA_REAGENDA = "Sin problema. ¿Qué día te acomoda para tu nueva entrevista?"
+HORA_PREGUNTA = "El **{dia}** tengo disponible {rangos}.\n¿A qué hora te acomoda?"
+HORA_OCUPADA = "A esa hora ya no tengo lugar 😕"
+
 
 CONFIRMACION_PREGUNTA = (
     "Confirma tus datos:\n"

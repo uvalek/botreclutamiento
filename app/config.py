@@ -64,8 +64,8 @@ class Settings(BaseSettings):
     cal_api_key: str = ""
     cal_event_type_id: int = 0
     cal_days_ahead: int = 7
-    cal_max_slots: int = 9
-    cal_slots_per_day: int = 3
+    # Días con lugar que se ofrecen como botones (máx. 3 = botones).
+    cal_max_days: int = 3
     cal_attendee_email_domain: str = "candidatos.adlek.com.mx"
     timezone: str = "America/Mexico_City"
 

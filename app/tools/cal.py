@@ -35,38 +35,68 @@ def _headers(version: str) -> dict[str, str]:
     }
 
 
+_DAYS_LONG = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+_MONTHS_LONG = [
+    "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
+    "septiembre", "octubre", "noviembre", "diciembre",
+]
+
+
+def _local(iso: str) -> datetime:
+    return datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(
+        ZoneInfo(get_settings().timezone)
+    )
+
+
+def fmt_time(minutes: int) -> str:
+    """780 → '1:00 pm' (formato de 12 horas, como se dice en México)."""
+    h, m = divmod(minutes % (24 * 60), 60)
+    suffix = "am" if h < 12 else "pm"
+    h12 = h % 12 or 12
+    return f"{h12}:{m:02d} {suffix}"
+
+
+def enrich(iso: str) -> dict[str, Any]:
+    """Datos de un horario libre, en hora de México."""
+    dt = _local(iso)
+    minutes = dt.hour * 60 + dt.minute
+    day_title = f"{_DAYS[dt.weekday()]} {dt.day} {_MONTHS[dt.month - 1]}"
+    return {
+        "start": iso,
+        "day": dt.date().isoformat(),
+        "day_title": day_title,  # "Jue 1 oct" (botón)
+        "day_long": f"{_DAYS_LONG[dt.weekday()]} {dt.day} de {_MONTHS_LONG[dt.month - 1]}",
+        "minutes": minutes,
+        "time": fmt_time(minutes),  # "1:00 pm"
+        "title": f"{day_title} {fmt_time(minutes)}",  # "Jue 1 oct 1:00 pm"
+    }
+
+
 def slot_title(iso: str) -> str:
-    """'2026-10-01T15:00:00Z' → 'Jue 1 oct 9:00' (hora de México). ≤ 20 caracteres."""
-    tz = ZoneInfo(get_settings().timezone)
-    dt = datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(tz)
-    return f"{_DAYS[dt.weekday()]} {dt.day} {_MONTHS[dt.month - 1]} {dt.hour}:{dt.minute:02d}"
+    """'2026-10-01T19:00:00Z' → 'Jue 1 oct 1:00 pm' (hora de México)."""
+    return enrich(iso)["title"]
 
 
-def pick_slots(starts: list[str], *, per_day: int, max_total: int, now: datetime) -> list[str]:
-    """Elige pocos horarios bien repartidos: hasta `per_day` por día."""
-    tz = ZoneInfo(get_settings().timezone)
-    by_day: dict[str, list[str]] = {}
-    for iso in sorted(starts):
+def free_slots(starts: list[str], *, now: datetime, max_days: int) -> list[dict[str, Any]]:
+    """Todos los horarios libres de los primeros `max_days` días con lugar
+    (sin los que empiezan en menos de 1 hora)."""
+    out: list[dict[str, Any]] = []
+    days: list[str] = []
+    for iso in sorted(set(starts)):
         dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
         if dt <= now + timedelta(minutes=60):
             continue
-        by_day.setdefault(dt.astimezone(tz).date().isoformat(), []).append(iso)
-    out: list[str] = []
-    for day in sorted(by_day):
-        items = by_day[day]
-        if len(items) <= per_day:
-            chosen = items
-        else:
-            step = (len(items) - 1) / (per_day - 1) if per_day > 1 else 0
-            chosen = [items[round(i * step)] for i in range(per_day)]
-        for iso in chosen:
-            if len(out) < max_total and iso not in out:
-                out.append(iso)
+        item = enrich(iso)
+        if item["day"] not in days:
+            if len(days) >= max_days:
+                break
+            days.append(item["day"])
+        out.append(item)
     return out
 
 
-async def get_slots() -> list[dict[str, str]] | None:
-    """[{start, title}] de los próximos días. None si Cal.com falla."""
+async def get_slots() -> list[dict[str, Any]] | None:
+    """Horarios libres de los próximos días. None si Cal.com falla."""
     s = get_settings()
     if not ready():
         return None
@@ -87,8 +117,7 @@ async def get_slots() -> list[dict[str, str]] | None:
         return None
     data = (r.json() or {}).get("data") or {}
     starts = [slot["start"] for day in data.values() for slot in (day or []) if slot.get("start")]
-    chosen = pick_slots(starts, per_day=s.cal_slots_per_day, max_total=s.cal_max_slots, now=now)
-    return [{"start": iso, "title": slot_title(iso)} for iso in chosen]
+    return free_slots(starts, now=now, max_days=s.cal_max_days)
 
 
 def attendee_email(phone: str | None, fallback: str) -> str:
