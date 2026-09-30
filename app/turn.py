@@ -106,19 +106,25 @@ async def _book_if_needed(
         return actions  # horarios fijos (sin Cal.com): como la v1
     old = s.data.get("cal_booking_uid")
     if old:
-        uid = await cal.reschedule(old, iso)
+        res = await cal.reschedule(old, iso)
     else:
-        uid = await cal.book(
+        res = await cal.book(
             start=iso,
             name=s.data.get("nombre", ""),
             phone=s.data.get("telefono"),
             ref=f"{conversation_id}-{s.prospect}",
         )
-    if uid:
-        s.data["cal_booking_uid"] = uid
+    if res.uid:
+        s.data["cal_booking_uid"] = res.uid
         log.info("cal_booked", conversation_id=conversation_id, rescheduled=bool(old))
         return actions
-    # No se pudo: probablemente se ocupó. Volvemos a horarios.
+    if not res.taken:
+        # Falla de Cal.com que no es "horario ocupado": no atoramos al
+        # candidato. La entrevista queda registrada en Chatwoot/Supabase.
+        log.error("cal_booking_failed_kept_in_chatwoot", conversation_id=conversation_id,
+                  error=res.error)
+        return actions
+    # El horario se ocupó: volvemos a ofrecer días/horas actualizados.
     s.state = "HORARIO"
     s.data.pop("horario", None)
     s.data.pop("horario_iso", None)

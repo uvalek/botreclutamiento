@@ -121,8 +121,25 @@ async def get_slots() -> list[dict[str, Any]] | None:
 
 
 def attendee_email(phone: str | None, fallback: str) -> str:
-    digits = "".join(c for c in (phone or "") if c.isdigit()) or fallback
-    return f"wa{digits}@{get_settings().cal_attendee_email_domain}"
+    digits = "".join(c for c in (phone or "") if c.isdigit())
+    if not digits:
+        digits = "".join(c for c in fallback if c.isalnum())
+    return get_settings().cal_attendee_email.format(digits=digits)
+
+
+# Cal.com responde así cuando el horario ya no está libre.
+_TAKEN_HINTS = ("already", "not available", "no available", "unavailable", "booked", "conflict")
+
+
+class BookingResult:
+    def __init__(self, uid: str | None = None, taken: bool = False, error: str = "") -> None:
+        self.uid = uid
+        self.taken = taken  # True solo si el horario se ocupó
+        self.error = error
+
+
+def _is_taken(status: int, body: str) -> bool:
+    return status == 409 or any(h in body.lower() for h in _TAKEN_HINTS)
 
 
 def normalize_phone(raw: str | None) -> str | None:
@@ -142,8 +159,8 @@ def normalize_phone(raw: str | None) -> str | None:
     return "+" + digits
 
 
-async def book(*, start: str, name: str, phone: str | None, ref: str) -> str | None:
-    """Agenda y devuelve el uid de la cita, o None si falló (p. ej. se ocupó)."""
+async def book(*, start: str, name: str, phone: str | None, ref: str) -> BookingResult:
+    """Agenda en Cal.com. `taken=True` si el horario se ocupó."""
     s = get_settings()
     attendee: dict[str, Any] = {
         "name": name or "Candidato",
@@ -165,17 +182,17 @@ async def book(*, start: str, name: str, phone: str | None, ref: str) -> str | N
             r = await http.post(f"{BASE}/bookings", json=payload, headers=_headers("2024-08-13"))
     except httpx.HTTPError as e:
         log.warning("cal_book_unreachable", error=str(e)[:160])
-        return None
+        return BookingResult(error="unreachable")
     if r.status_code >= 400:
         log.warning("cal_book_error", status=r.status_code, body=r.text[:300])
-        return None
+        return BookingResult(taken=_is_taken(r.status_code, r.text), error=r.text[:120])
     data = (r.json() or {}).get("data") or {}
     if isinstance(data, list):
         data = data[0] if data else {}
-    return data.get("uid")
+    return BookingResult(uid=data.get("uid"))
 
 
-async def reschedule(uid: str, start: str) -> str | None:
+async def reschedule(uid: str, start: str) -> BookingResult:
     try:
         async with httpx.AsyncClient(timeout=20) as http:
             r = await http.post(
@@ -185,12 +202,12 @@ async def reschedule(uid: str, start: str) -> str | None:
             )
     except httpx.HTTPError as e:
         log.warning("cal_reschedule_unreachable", error=str(e)[:160])
-        return None
+        return BookingResult(error="unreachable")
     if r.status_code >= 400:
         log.warning("cal_reschedule_error", status=r.status_code, body=r.text[:300])
-        return None
+        return BookingResult(taken=_is_taken(r.status_code, r.text), error=r.text[:120])
     data = (r.json() or {}).get("data") or {}
-    return data.get("uid") or uid
+    return BookingResult(uid=data.get("uid") or uid)
 
 
 async def cancel(uid: str, reason: str) -> bool:

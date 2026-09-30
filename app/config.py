@@ -66,7 +66,9 @@ class Settings(BaseSettings):
     cal_days_ahead: int = 7
     # Días con lugar que se ofrecen como botones (máx. 3 = botones).
     cal_max_days: int = 3
-    cal_attendee_email_domain: str = "candidatos.adlek.com.mx"
+    # Cal.com exige un correo que pueda recibir mensajes. Se usa el "+" de
+    # Gmail para que cada candidato tenga uno distinto: {digits} = su teléfono.
+    cal_attendee_email: str = "adlekcontact+wa{digits}@gmail.com"
     timezone: str = "America/Mexico_City"
 
     # --- Buffer de entrada ------------------------------------------------

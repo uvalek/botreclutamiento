@@ -194,14 +194,15 @@ def _slots_jueves(busy_minutes=()):
 @pytest.fixture
 def calmock(monkeypatch):
     monkeypatch.setattr(cal, "ready", lambda: True)
-    state = {"slots": _slots_jueves(busy_minutes=(12 * 60,)), "booked": {}, "uid": "uid-123"}
+    state = {"slots": _slots_jueves(busy_minutes=(12 * 60,)), "booked": {}, "uid": "uid-123",
+             "taken": False}
 
     async def slots():
         return state["slots"]
 
     async def book(**kw):
         state["booked"].update(kw)
-        return state["uid"]
+        return cal.BookingResult(uid=state["uid"], taken=state["taken"])
 
     monkeypatch.setattr(cal, "get_slots", slots)
     monkeypatch.setattr(cal, "book", book)
@@ -246,6 +247,7 @@ async def test_calcom_horario_ocupado_al_confirmar(fake, calmock):
     r = await run(r.session, "1")
     r = await run(r.session, "9:00 am")
     calmock["uid"] = None  # alguien lo ganó
+    calmock["taken"] = True
     r = await run(r.session, "Sí, confirmar")
     assert r.session.state == "HORARIO"
     assert "se acaba de ocupar" in texts(r.actions)[0]
@@ -281,3 +283,20 @@ def test_rangos_y_horas():
 )
 def test_parse_time(text, expected):
     assert E.parse_time(text) == expected
+
+
+async def test_calcom_error_distinto_no_atora(fake, calmock):
+    s = await at_state(["hola", "1", "Juan Pérez", "27", "Apizaco", "Matutino", "Sí, todos"])
+    r = await run(s, "Más de 6 meses")
+    r = await run(r.session, "1")
+    r = await run(r.session, "9:00 am")
+    calmock["uid"] = None  # p. ej. correo rechazado: NO es horario ocupado
+    r = await run(r.session, "Sí, confirmar")
+    assert r.session.state == "AGENDADO"
+    assert any(isinstance(a, E.Schedule) and a.kind == E.RECORDATORIO for a in r.actions)
+
+
+def test_correo_del_candidato():
+    assert cal.attendee_email("+522411234567", "x") == "adlekcontact+wa522411234567@gmail.com"
+    assert cal._is_taken(400, '{"message":"User either already has booking at this time or is not available"}')
+    assert not cal._is_taken(400, '{"message":"email_domain_cannot_receive_mail"}')
