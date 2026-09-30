@@ -58,7 +58,8 @@ async def run(
                 # Pausa entre burbujas: Chatwoot las manda a WhatsApp en una
                 # cola, y sin pausa pueden llegar desordenadas.
                 if sent_before and send_delay > 0:
-                    await asyncio.sleep(send_delay)
+                    # Pausa proporcional al largo, como si se estuviera escribiendo.
+                    await asyncio.sleep(min(3.5, send_delay + len(action.text) / 100))
                 if isinstance(action, SendOptions):
                     await client.send_options(conversation_id, action.text, action.options)
                 else:

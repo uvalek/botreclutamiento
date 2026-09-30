@@ -1,0 +1,242 @@
+"""v2: orquestador del turno con IA simulada (sin llamadas reales)."""
+
+import pytest
+
+from app import llm, memory, turn
+from app import vacante as V
+from app.agents import redactor
+from app.config import get_settings
+from app.flow import engine as E
+from app.tools import cal
+
+CONF = E.Conf(slots=["Mié 30 sep 9:00", "Mié 30 sep 11:30", "Jue 1 oct 9:00"])
+
+
+class FakeLLM:
+    """Responde según el propósito de la llamada."""
+
+    def __init__(self):
+        self.interp = None
+        self.redactor = None
+        self.m1 = None
+        self.calls = []
+
+    async def chat_json(self, system, messages, *, chat_id="", max_tokens=600, purpose="llm"):
+        self.calls.append(purpose)
+        value = {"interprete": self.interp, "redactor": self.redactor, "m1": self.m1}.get(purpose)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+
+@pytest.fixture
+def fake(monkeypatch):
+    f = FakeLLM()
+    monkeypatch.setattr(llm, "chat_json", f.chat_json)
+    monkeypatch.setattr(llm, "available", lambda chat_id="": True)
+
+    async def no_history(*a, **k):
+        return []
+
+    monkeypatch.setattr(memory, "load", no_history)
+    monkeypatch.setattr(cal, "ready", lambda: False)
+    return f
+
+
+def texts(actions):
+    return [a.text for a in actions if isinstance(a, (E.Send, E.SendOptions))]
+
+
+async def at_state(state_msgs):
+    s = None
+    for m in state_msgs:
+        s, _ = E.handle_text(s, m, CONF)
+    return s
+
+
+async def run(s, text, phone="+522411234567"):
+    return await turn.run(s, turn.Batch(conversation_id=7, status="pending", texts=[text], phone=phone), CONF)
+
+
+async def test_boton_no_usa_interprete(fake):
+    s = await at_state(["hola"])
+    fake.redactor = {"burbujas": ["¡Perfecto! Para empezar, ¿me dices tu **nombre completo**?"]}
+    r = await run(s, "Quiero aplicar")
+    assert r.session.state == "NOMBRE"
+    assert "interprete" not in fake.calls
+    assert r.via == "ia"  # el redactor sí lo hizo natural
+    assert texts(r.actions) == ["¡Perfecto! Para empezar, ¿me dices tu **nombre completo**?"]
+
+
+async def test_varios_datos_en_un_mensaje(fake):
+    s = await at_state(["hola", "1"])
+    fake.interp = {
+        "respuesta_paso": "Juan Pérez",
+        "datos_extra": {"edad": "27", "municipio": "Apizaco", "turno": "Matutino"},
+        "pregunta": None,
+        "quiere_asesor": False,
+    }
+    fake.redactor = None  # sin redactor: textos del guion
+    r = await run(s, "soy Juan Pérez, tengo 27, vivo en Apizaco y prefiero en la mañana")
+    s = r.session
+    assert s.state == "DOCUMENTOS"
+    assert s.data["nombre"] == "Juan Pérez"
+    assert s.data["edad"] == "25–35"
+    assert s.data["municipio"] == "Apizaco"
+    assert s.data["turno"] == "Matutino"
+    msgs = [a for a in r.actions if isinstance(a, (E.Send, E.SendOptions))]
+    assert len(msgs) == 1 and msgs[0].options == V.OPC_DOCUMENTOS  # solo la última pregunta
+    attrs = [a.values for a in r.actions if isinstance(a, E.Attrs)]
+    assert any("candidato_turno" in v for v in attrs)
+    assert s.data["telefono"] == "+522411234567"
+
+
+async def test_dato_extra_invalido_se_detiene(fake):
+    s = await at_state(["hola", "1"])
+    fake.interp = {"respuesta_paso": "Ana Ruiz", "datos_extra": {"edad": "banana"}}
+    r = await run(s, "Ana Ruiz y tengo banana años")
+    assert r.session.state == "EDAD"
+
+
+async def test_respuesta_mas_pregunta(fake, monkeypatch):
+    s = await at_state(["hola", "1", "Juan Pérez"])
+    fake.interp = {"respuesta_paso": "25–35", "datos_extra": {}, "pregunta": "¿hay transporte?"}
+    r = await run(s, "tengo 30, ¿y hay transporte?")
+    assert r.session.state == "MUNICIPIO"
+    body = texts(r.actions)
+    assert V.FAQ_RESPUESTAS["transporte"] in body[0]
+
+
+async def test_solo_pregunta_rag(fake, monkeypatch):
+    s = await at_state(["hola", "1", "Juan Pérez"])
+    fake.interp = {"respuesta_paso": None, "datos_extra": {}, "pregunta": "¿qué fabrican?"}
+    fake.m1 = {"respuesta": "Fabricamos arneses eléctricos y piezas plásticas.", "encontrado": True}
+
+    async def fake_retrieve(q, k=4, min_similarity=0.2):
+        return ["La planta fabrica arneses eléctricos y piezas plásticas inyectadas."]
+
+    from app import rag
+
+    monkeypatch.setattr(rag, "retrieve", fake_retrieve)
+    r = await run(s, "oye y qué fabrican ahí")
+    assert r.session.state == "EDAD"
+    body = "\n".join(texts(r.actions))
+    assert "arneses" in body and V.EDAD_PREGUNTA in body
+
+
+async def test_rag_sin_dato_no_inventa(fake, monkeypatch):
+    s = await at_state(["hola", "1", "Juan Pérez"])
+    fake.interp = {"respuesta_paso": None, "pregunta": "¿dan vales de despensa?"}
+    fake.m1 = {"respuesta": "No tengo ese dato", "encontrado": False}
+    from app import rag
+
+    async def none(*a, **k):
+        return []
+
+    monkeypatch.setattr(rag, "retrieve", none)
+    r = await run(s, "¿dan vales de despensa?")
+    assert V.FAQ_DESCONOCIDA in "\n".join(texts(r.actions))
+
+
+async def test_ia_caida_usa_guion(fake):
+    s = await at_state(["hola", "1", "Juan Pérez"])
+    fake.interp = None  # la IA no respondió
+    fake.redactor = None
+    r = await run(s, "pues fíjate que tengo veintitantos")
+    assert r.session.state == "EDAD"
+    assert V.NO_ENTENDI in texts(r.actions)[0]
+
+
+def test_redactor_rechaza_si_cambia_datos():
+    base = ["¡Listo, Juan! ✅ Tu entrevista quedó para el **Jue 1 oct 9:00**."]
+    assert redactor.validate(["¡Listo! Te esperamos el jueves."], base, ["Juan"]) is None
+    ok = redactor.validate(["¡Listo, Juan! Quedó para el **Jue 1 oct 9:00** 🙌"], base, ["Juan"])
+    assert ok
+
+
+def test_redactor_exige_pregunta():
+    base = ["¿En qué municipio vives?"]
+    assert redactor.validate(["Gracias por la info."], base, []) is None
+    assert redactor.validate(["Gracias 🙂", "¿En qué municipio vives?"], base, [])
+
+
+def test_redactor_limita_burbujas():
+    base = ["¿Qué turno prefieres?"]
+    assert redactor.validate(["a", "b", "c", "¿Qué turno?"], base, []) is None
+
+
+async def test_bienvenida_no_se_humaniza(fake):
+    fake.redactor = {"burbujas": ["Hola"]}
+    r = await run(None, "hola")
+    assert "demostración de Adlek" in texts(r.actions)[0]
+    assert "redactor" not in fake.calls
+
+
+async def test_reiniciar_nuevo_prospecto(fake):
+    s = await at_state(["hola", "1", "Juan Pérez"])
+    s.prospect = "abc"
+    r = await run(s, "reiniciar")
+    assert r.session.prospect and r.session.prospect != "abc"
+    assert r.session.state == "BIENVENIDA"
+
+
+async def test_calcom_agenda(fake, monkeypatch):
+    monkeypatch.setattr(cal, "ready", lambda: True)
+
+    async def slots():
+        return [
+            {"start": "2026-10-01T15:00:00Z", "title": "Jue 1 oct 9:00"},
+            {"start": "2026-10-01T18:00:00Z", "title": "Jue 1 oct 12:00"},
+        ]
+
+    booked = {}
+
+    async def book(**kw):
+        booked.update(kw)
+        return "uid-123"
+
+    monkeypatch.setattr(cal, "get_slots", slots)
+    monkeypatch.setattr(cal, "book", book)
+    s = await at_state(["hola", "1", "Juan Pérez", "27", "Apizaco", "Matutino", "Sí, todos"])
+    r = await run(s, "Más de 6 meses")
+    s = r.session
+    assert s.state == "HORARIO"
+    assert [a.options for a in r.actions if isinstance(a, E.SendOptions)][-1] == [
+        "Jue 1 oct 9:00", "Jue 1 oct 12:00"]
+    r = await run(s, "Jue 1 oct 12:00")
+    assert r.session.data["horario_iso"] == "2026-10-01T18:00:00Z"
+    r = await run(r.session, "Sí, confirmar")
+    assert r.session.state == "AGENDADO"
+    assert r.session.data["cal_booking_uid"] == "uid-123"
+    assert booked["start"] == "2026-10-01T18:00:00Z" and booked["name"] == "Juan Pérez"
+
+
+async def test_calcom_horario_ocupado(fake, monkeypatch):
+    monkeypatch.setattr(cal, "ready", lambda: True)
+
+    async def slots():
+        return [{"start": "2026-10-01T15:00:00Z", "title": "Jue 1 oct 9:00"}]
+
+    async def book(**kw):
+        return None  # se ocupó
+
+    monkeypatch.setattr(cal, "get_slots", slots)
+    monkeypatch.setattr(cal, "book", book)
+    s = await at_state(["hola", "1", "Juan Pérez", "27", "Apizaco", "Matutino", "Sí, todos"])
+    r = await run(s, "Más de 6 meses")
+    r = await run(r.session, "1")
+    r = await run(r.session, "Sí, confirmar")
+    assert r.session.state == "HORARIO"
+    assert "se acaba de ocupar" in texts(r.actions)[0]
+    assert not any(isinstance(a, E.Schedule) and a.kind == E.RECORDATORIO for a in r.actions)
+
+
+def test_cal_slot_title_y_reparto():
+    from datetime import UTC, datetime
+
+    get_settings()
+    assert cal.slot_title("2026-10-01T15:00:00Z") == "Jue 1 oct 9:00"
+    starts = [f"2026-10-01T{h:02d}:00:00Z" for h in range(15, 23)]
+    picked = cal.pick_slots(starts, per_day=3, max_total=9, now=datetime(2026, 9, 30, tzinfo=UTC))
+    assert len(picked) == 3 and picked[0] == starts[0] and picked[-1] == starts[-1]
+    assert cal.normalize_phone("+5212411234567") == "+522411234567"

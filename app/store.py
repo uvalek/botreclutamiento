@@ -40,6 +40,12 @@ create table if not exists jobs (
     created_at        real    not null
 );
 create index if not exists jobs_pending_idx on jobs (status, due_at);
+create table if not exists buffer (
+    message_id      integer primary key,
+    conversation_id integer not null,
+    data            text    not null,
+    created_at      real    not null
+);
 create index if not exists jobs_conv_idx on jobs (conversation_id, kind, status);
 """
 
@@ -176,6 +182,38 @@ class Store:
                 (conversation_id,),
             ).fetchall()
         return [Job(*r) for r in rows]
+
+
+    # --- buffer de entrada (respaldo por si el contenedor reinicia) --------
+
+    def buffer_add(self, message_id: int, conversation_id: int, data: dict) -> None:
+        with self._lock:
+            self._conn.execute(
+                "insert or ignore into buffer (message_id, conversation_id, data, created_at) "
+                "values (?, ?, ?, ?)",
+                (message_id, conversation_id, json.dumps(data, ensure_ascii=False), time.time()),
+            )
+
+    def buffer_remove(self, message_ids: list[int]) -> None:
+        if not message_ids:
+            return
+        with self._lock:
+            self._conn.executemany(
+                "delete from buffer where message_id = ?", [(i,) for i in message_ids]
+            )
+
+    def buffer_leftovers(self) -> dict[int, list[dict]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "select conversation_id, data from buffer order by message_id"
+            ).fetchall()
+        out: dict[int, list[dict]] = {}
+        for conv, data in rows:
+            try:
+                out.setdefault(conv, []).append(json.loads(data))
+            except ValueError:
+                continue
+        return out
 
 
 _STORE: Store | None = None

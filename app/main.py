@@ -14,11 +14,12 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app import processor
+from app import processor, rag
 from app.chatwoot import fits_interactive, get_client
 from app.config import get_settings
 from app.store import get_store
 from app.tasks import spawn
+from app.tools import cal, supa
 
 settings = get_settings()
 logging.basicConfig(level=settings.log_level)
@@ -28,7 +29,7 @@ log = structlog.get_logger(__name__)
 
 # Se sube a mano en cada cambio importante para confirmar que EasyPanel
 # redeployó (GET /version).
-_VERSION = "v1-demo-foro-2026-09-29"
+_VERSION = "v2-ia-calcom-2026-09-29"
 
 
 @asynccontextmanager
@@ -50,9 +51,33 @@ async def lifespan(_: FastAPI):
         log.warning("webhook_unprotected_set_CHATWOOT_WEBHOOK_SECRET")
     if len(settings.slots) < 1 or not fits_interactive(settings.slots):
         log.warning("interview_slots_will_use_text", slots=settings.slots)
+    log.info(
+        "startup_v2",
+        ai=settings.ai_ready,
+        model=settings.openai_model,
+        supabase=settings.supabase_ready,
+        cal=settings.cal_ready,
+        buffer_s=settings.buffer_window_seconds,
+    )
+    spawn(_startup_tasks())
     spawn(processor.scheduler_loop())
     yield
     await get_client().close()
+    await supa.close()
+
+
+async def _startup_tasks() -> None:
+    try:
+        n = await processor.recover_buffer()
+        if n:
+            log.info("buffer_recovered", messages=n)
+    except Exception as e:  # noqa: BLE001
+        log.exception("buffer_recover_failed", error=str(e))
+    try:
+        log.info("rag_status", status=await rag.ensure_ingested())
+    except Exception as e:  # noqa: BLE001
+        log.exception("rag_ingest_failed", error=str(e))
+    await cal.log_event_types()
 
 
 app = FastAPI(title="Bot de reclutamiento (demo Adlek)", lifespan=lifespan)
@@ -86,7 +111,13 @@ async def health() -> dict[str, str]:
 
 @app.get("/version")
 async def version() -> dict[str, object]:
-    return {"version": _VERSION, "dry_run": settings.dry_run}
+    return {
+        "version": _VERSION,
+        "dry_run": settings.dry_run,
+        "ai": settings.ai_ready,
+        "supabase": settings.supabase_ready,
+        "cal": settings.cal_ready,
+    }
 
 
 def valid_signature(secret: str, body: bytes, timestamp: str | None, signature: str | None) -> bool:

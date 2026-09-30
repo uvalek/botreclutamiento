@@ -40,6 +40,41 @@ class Settings(BaseSettings):
     # Muestra las líneas "(en esta demo...)".
     demo_mode: bool = True
 
+    # --- IA (v2) ----------------------------------------------------------
+    # Sin OPENAI_API_KEY el bot funciona igual que la v1 (textos fijos).
+    openai_api_key: str = ""
+    openai_model: str = "gpt-5.4-nano"
+    openai_embedding_model: str = "text-embedding-3-small"
+    openai_reasoning_effort: str = "low"
+    openai_reasoning_max_tokens_floor: int = 2000
+    ai_enabled: bool = True
+    # Si la IA tarda más que esto, se usa el texto fijo.
+    llm_timeout_seconds: float = 12.0
+    memory_turns: int = 12
+    chat_token_budget_per_day: int = 60000
+    global_token_budget_per_day: int = 2000000
+
+    # --- Supabase (proyecto "demos") --------------------------------------
+    supabase_url: str = ""
+    supabase_service_key: str = ""
+    # Etiqueta que separa los documentos del RAG y los contactos de esta demo.
+    demo_key: str = "reclutamiento"
+
+    # --- Cal.com ----------------------------------------------------------
+    cal_api_key: str = ""
+    cal_event_type_id: int = 0
+    cal_days_ahead: int = 7
+    cal_max_slots: int = 9
+    cal_slots_per_day: int = 3
+    cal_attendee_email_domain: str = "candidatos.adlek.com.mx"
+    timezone: str = "America/Mexico_City"
+
+    # --- Buffer de entrada ------------------------------------------------
+    # Junta los mensajes que el candidato manda seguidos y contesta todo junto.
+    buffer_window_seconds: float = 6.0
+    # Si tocó un botón, casi no se espera.
+    buffer_button_seconds: float = 1.0
+
     # --- Operación --------------------------------------------------------
     db_path: str = "data/reclutamiento.db"
     # Pausa entre burbujas para que lleguen en orden a WhatsApp.
@@ -57,6 +92,18 @@ class Settings(BaseSettings):
     @property
     def dry_run(self) -> bool:
         return not self.chatwoot_bot_token
+
+    @property
+    def ai_ready(self) -> bool:
+        return self.ai_enabled and bool(self.openai_api_key)
+
+    @property
+    def supabase_ready(self) -> bool:
+        return bool(self.supabase_url and self.supabase_service_key)
+
+    @property
+    def cal_ready(self) -> bool:
+        return bool(self.cal_api_key and self.cal_event_type_id)
 
 
 @lru_cache

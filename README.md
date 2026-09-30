@@ -10,7 +10,20 @@ Candidato (WhatsApp) → Meta → Chatwoot (bandeja WhatsApp Demos)
    → Chatwoot → Meta → Candidato
 ```
 
-No usa IA: es un flujo guiado con un intérprete de respuestas (números, palabras, sinónimos y errores de dedo). Las respuestas salen de textos fijos en `app/vacante.py`, así que **el bot no puede inventar datos**.
+**v2 (rama `v2`):** arquitectura de la plantilla sobre el guion.
+
+```
+Buffer de entrada → Policía (seguridad) → Router/Intérprete (IA) → Guion (máquina de estados)
+   → M1 Preguntas (RAG en Supabase) · M3 Agendamiento (Cal.com) · M4 Seguimiento (temporizadores)
+   → M2 Redactor (IA): 1–3 burbujas naturales, con botones en la última
+```
+
+- El **guion** sigue siendo la autoridad: qué dato falta, validación, clasificación, registro en Chatwoot. La IA entiende texto libre (varios datos en un mensaje, notas de voz) y hace que suene humano.
+- **Red de seguridad:** si la IA falla, tarda o cambia un dato, se usan los textos fijos. Sin `OPENAI_API_KEY` el bot funciona igual que la v1.
+- **Supabase (proyecto demos):** memoria en `n8n_chat_histories`, RAG en `documents` (metadata `demo=reclutamiento`), candidatos en `contactos` (un renglón por prospecto).
+- **Cal.com:** solo se ofrecen horarios libres del tipo de evento; al confirmar se reserva. Si Cal.com no responde, se usan los horarios fijos de `INTERVIEW_SLOTS`.
+
+**v1 (sin IA):** un flujo guiado con un intérprete de respuestas (números, palabras, sinónimos y errores de dedo). Las respuestas salen de textos fijos en `app/vacante.py`, así que **el bot no puede inventar datos**.
 
 ## Flujo
 

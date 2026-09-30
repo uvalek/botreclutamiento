@@ -103,6 +103,12 @@ class Session:
     followup_state: str | None = None  # paso en el que ya se mandó seguimiento
     abandoned: bool = False
     reagenda: bool = False
+    # v2: id del prospecto (cambia con "reiniciar"), horarios ofrecidos por
+    # Cal.com ([{start, title}]), cuándo se consultaron y últimos botones.
+    prospect: str = ""
+    offered: list[dict[str, str]] = field(default_factory=list)
+    offered_at: float = 0.0
+    last_options: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -394,7 +400,12 @@ def _match_municipio(text: str) -> tuple[int, str] | None:
 # ---------------------------------------------------------------------------
 
 
-def _options_for(state: str, conf: Conf) -> list[str] | None:
+def slot_titles(s: Session, conf: Conf) -> list[str]:
+    """Horarios a ofrecer: los de Cal.com si hay, si no los fijos de la config."""
+    return [o["title"] for o in s.offered] if s.offered else list(conf.slots)
+
+
+def _options_for(s: Session, conf: Conf) -> list[str] | None:
     return {
         "BIENVENIDA": V.OPC_BIENVENIDA,
         "INFO": V.OPC_INFO,
@@ -403,17 +414,17 @@ def _options_for(state: str, conf: Conf) -> list[str] | None:
         "TURNO": V.OPC_TURNO,
         "DOCUMENTOS": V.OPC_DOCUMENTOS,
         "EXPERIENCIA": V.OPC_EXPERIENCIA,
-        "HORARIO": conf.slots,
+        "HORARIO": slot_titles(s, conf),
         "CONFIRMACION": V.OPC_CONFIRMACION,
         "RECORDATORIO": V.OPC_RECORDATORIO,
         "OFRECER_ASESOR": V.OPC_OFRECER_ASESOR,
-    }.get(state)
+    }.get(s.state)
 
 
-def _synonyms_for(state: str, conf: Conf) -> dict[int, list[str]]:
-    if state == "HORARIO":
-        return slot_synonyms(conf.slots)
-    return SYN.get(state, {})
+def _synonyms_for(s: Session, conf: Conf) -> dict[int, list[str]]:
+    if s.state == "HORARIO":
+        return slot_synonyms(slot_titles(s, conf))
+    return SYN.get(s.state, {})
 
 
 def _question_text(s: Session, conf: Conf, reask: bool) -> str:
@@ -480,7 +491,7 @@ def ask(
         question = f"{prefix}\n{question}"
     elif prefix:
         actions.append(Send(prefix))
-    options = _options_for(s.state, conf)
+    options = _options_for(s, conf)
     actions.append(SendOptions(question, list(options)) if options else Send(question))
     if arm_followup and s.state in SOLICITUD_STATES:
         actions.append(Schedule(SEGUIMIENTO, conf.followup_delay))
@@ -684,8 +695,8 @@ def _not_matched(s: Session, text: str, conf: Conf) -> Result:
 
 
 def _match(s: Session, text: str, conf: Conf, parser: Callable[[str], int | None] | None = None):
-    options = _options_for(s.state, conf) or []
-    return match_option(text, options, _synonyms_for(s.state, conf), parser)
+    options = _options_for(s, conf) or []
+    return match_option(text, options, _synonyms_for(s, conf), parser)
 
 
 def _h_bienvenida(s: Session, text: str, conf: Conf) -> Result:
@@ -798,8 +809,13 @@ def _h_horario(s: Session, text: str, conf: Conf) -> Result:
     idx = _match(s, text, conf)
     if idx is None:
         return _not_matched(s, text, conf)
-    s.data["horario"] = conf.slots[idx]
-    return _goto(s, "CONFIRMACION", conf, attrs={"entrevista_horario": conf.slots[idx]})
+    titles = slot_titles(s, conf)
+    s.data["horario"] = titles[idx]
+    if s.offered and idx < len(s.offered):
+        s.data["horario_iso"] = s.offered[idx]["start"]
+    else:
+        s.data.pop("horario_iso", None)
+    return _goto(s, "CONFIRMACION", conf, attrs={"entrevista_horario": titles[idx]})
 
 
 def _espera_legible(seconds: int) -> str:
@@ -928,3 +944,52 @@ _HANDLERS: dict[str, Callable[[Session, str, Conf], Result]] = {
     "CONFIRMADO": _h_confirmado,
     "OFRECER_ASESOR": _h_ofrecer_asesor,
 }
+
+
+# ---------------------------------------------------------------------------
+# v2: ¿el guion entiende este texto sin ayuda de la IA?
+# ---------------------------------------------------------------------------
+
+_PARSERS: dict[str, Callable[[str], int | None]] = {
+    "EDAD": _parse_age,
+    "EXPERIENCIA": _parse_experience,
+}
+
+# Campo que llena cada paso de la solicitud (para datos extra de la IA).
+FIELD_BY_STATE = {
+    "NOMBRE": "nombre",
+    "EDAD": "edad",
+    "MUNICIPIO": "municipio",
+    "TURNO": "turno",
+    "DOCUMENTOS": "documentos",
+    "EXPERIENCIA": "experiencia",
+}
+
+
+def quick_match(s: Session | None, text: str, conf: Conf) -> bool:
+    """True si el guion puede resolver el texto por sí solo (botón, número,
+    palabra clave, comando). Sin efectos secundarios."""
+    if s is None or s.state in ("INICIO", "ASESOR"):
+        return True
+    if is_reset(text) or is_asesor(text):
+        return True
+    if s.state == "NOMBRE":
+        return (
+            parse_name(text) is not None
+            and not faq.answer(text)
+            and not is_greeting(text)
+            and not faq.looks_like_question(text)
+        )
+    if s.state == "MUNICIPIO":
+        return _match_municipio(text) is not None
+    if s.state in ("AGENDADO", "CONFIRMADO", "NO_INTERESADO"):
+        return False
+    options = _options_for(s, conf)
+    if not options:
+        return False
+    return _match(s, text, conf, _PARSERS.get(s.state)) is not None
+
+
+def current_question(s: Session, conf: Conf) -> tuple[str, list[str]]:
+    """Pregunta y opciones del paso actual (para la IA)."""
+    return _question_text(s, conf, reask=True), list(_options_for(s, conf) or [])
