@@ -25,11 +25,11 @@ Ser mayor de edad y contar con estos documentos: INE, CURP, número de seguro so
 1. El candidato llena su solicitud por WhatsApp con el asistente (toma unos minutos).
 2. Agenda su entrevista en uno de los horarios disponibles.
 3. Recibe un recordatorio antes de su entrevista y confirma su asistencia.
-4. Se presenta a la entrevista en la recepción de la planta Huamantla con su INE y su solicitud de empleo.
+4. Se presenta a la entrevista en el Centro de Convenciones de Tlaxcala con su INE y su solicitud de empleo.
 5. Recursos Humanos le informa el resultado y, si es contratado, la fecha de ingreso y su capacitación.
 
 ## Entrevista
-Las entrevistas son en la recepción de la planta Huamantla. Hay que llevar INE y solicitud de empleo. Se recomienda llegar 10 minutos antes. Si el candidato no puede asistir, puede cambiar su horario escribiendo por WhatsApp.
+Las entrevistas son en el Centro de Convenciones de Tlaxcala (Tlaxcala capital), no en la planta. El asistente comparte la ubicación en Google Maps al agendar o cuando el candidato la pide. El trabajo, una vez contratado, es en la planta Huamantla. Hay que llevar INE y solicitud de empleo. Se recomienda llegar 10 minutos antes. Si el candidato no puede asistir, puede cambiar su horario escribiendo por WhatsApp.
 
 ## Capacitación y primer día
 Los operadores de nuevo ingreso reciben capacitación en seguridad industrial y en su línea de trabajo durante sus primeros días. La empresa entrega el equipo de protección necesario para el puesto.

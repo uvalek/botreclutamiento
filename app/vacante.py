@@ -18,7 +18,8 @@ from __future__ import annotations
 EMPRESA = "Componentes del Centro"
 PUESTO = "Operador de producción"
 VACANTE_RESUMEN = "Operador de producción · Planta Huamantla"
-LUGAR_ENTREVISTA = "recepción de la planta Huamantla"
+# Lugar de las entrevistas (debe coincidir con LOCATION_URL).
+LUGAR_ENTREVISTA = "Centro de Convenciones de Tlaxcala"
 
 # ---------------------------------------------------------------------------
 # Opciones (títulos de botones: máximo 20 caracteres; filas de lista: 24)
@@ -83,10 +84,10 @@ CLASIF_FUERA_RUTA = (
     "pero puedes agendar y lo revisamos en tu entrevista."
 )
 
-HORARIO_PREGUNTA = f"Elige el horario de tu entrevista en la **{LUGAR_ENTREVISTA}**:"
+HORARIO_PREGUNTA = f"Elige el horario de tu entrevista en el **{LUGAR_ENTREVISTA}**:"
 HORARIO_PREGUNTA_REAGENDA = "Sin problema. Elige tu nuevo horario de entrevista:"
 # Agenda con Cal.com (dos pasos: día → hora)
-DIA_PREGUNTA = f"¿Qué día te acomoda para tu entrevista en la **{LUGAR_ENTREVISTA}**?"
+DIA_PREGUNTA = f"¿Qué día te acomoda para tu entrevista en el **{LUGAR_ENTREVISTA}**?"
 DIA_PREGUNTA_REAGENDA = "Sin problema. ¿Qué día te acomoda para tu nueva entrevista?"
 HORA_PREGUNTA = "El **{dia}** tengo disponible {rangos}.\n¿A qué hora te acomoda?"
 HORA_OCUPADA = "A esa hora ya no tengo lugar 😕"
@@ -113,7 +114,7 @@ AGENDADO = (
 )
 AGENDADO_DEMO = "_En esta demo el recordatorio llega en {espera}._"
 AGENDADO_OTRO_TEXTO = (
-    f"Tu entrevista es el **{{horario}}** en la {LUGAR_ENTREVISTA}.\n"
+    f"Tu entrevista es el **{{horario}}** en el {LUGAR_ENTREVISTA}.\n"
     "Si necesitas algo, escribe **asesor**."
 )
 
@@ -121,7 +122,7 @@ RECORDATORIO_ENCABEZADO_DEMO = "⏰ _Recordatorio (en la vida real llega un día
 RECORDATORIO_ENCABEZADO = "⏰ Recordatorio de tu entrevista"
 RECORDATORIO = (
     "{encabezado}\n"
-    f"{{nombre}}, te esperamos el **{{horario}}** en la {LUGAR_ENTREVISTA}. "
+    f"{{nombre}}, te esperamos el **{{horario}}** en el {LUGAR_ENTREVISTA}. "
     "Lleva INE y solicitud de empleo.\n"
     "Responde **1** para confirmar tu asistencia o **2** para cambiar el horario."
 )
@@ -133,7 +134,7 @@ CONFIRMADO = (
     "¡Gracias, {nombre}! 🙌 Te esperamos el **{horario}**.\n"
     "Recuerda llevar INE y solicitud de empleo."
 )
-CONFIRMADO_OTRO_TEXTO = f"Te esperamos el **{{horario}}** en la {LUGAR_ENTREVISTA} 🙌"
+CONFIRMADO_OTRO_TEXTO = f"Te esperamos el **{{horario}}** en el {LUGAR_ENTREVISTA} 🙌"
 TIP_REINICIAR = "Demo: escribe **reiniciar** para verla desde el inicio."
 
 NO_INTERESADO = (
@@ -172,7 +173,7 @@ FAQ_RESPUESTAS = {
     "prestaciones": "🍽️ Tienes comedor, transporte de personal y prestaciones de ley desde el primer día.",
     "transporte": "🚌 Hay transporte de personal con rutas desde Huamantla, Apizaco y Tlaxcala.",
     "turnos": "🕐 Hay turnos matutino, vespertino y nocturno.",
-    "ubicacion": f"📍 La planta está en Huamantla, Tlaxcala. Las entrevistas son en la {LUGAR_ENTREVISTA}.",
+    "ubicacion": f"📍 Las entrevistas son en el **{LUGAR_ENTREVISTA}**. La planta está en Huamantla.",
     "llevar": "📄 Para la entrevista lleva tu **INE** y tu **solicitud de empleo**.",
     "puesto": f"👷 La vacante es para **{PUESTO}** en la planta Huamantla.",
     "demo": (
