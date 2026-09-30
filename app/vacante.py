@@ -91,10 +91,18 @@ DIA_PREGUNTA_REAGENDA = "Sin problema. ¿Qué día te acomoda para tu nueva entr
 HORA_PREGUNTA = "El **{dia}** tengo disponible {rangos}.\n¿A qué hora te acomoda?"
 HORA_OCUPADA = "A esa hora ya no tengo lugar 😕"
 
+# Correo opcional (solo cuando se agenda con Cal.com)
+OPC_CORREO = ["Sin correo"]
+CORREO_PREGUNTA = (
+    "¿Quieres que también te llegue la confirmación a tu correo?\n"
+    "Escríbelo aquí o toca **Sin correo**."
+)
+CORREO_NO_VALIDO = "Mmm, ese correo no parece válido 🤔"
+
 
 CONFIRMACION_PREGUNTA = (
     "Confirma tus datos:\n"
-    "👤 {nombre}\n"
+    "👤 {nombre}{correo}\n"
     f"📅 {{horario}} · {LUGAR_ENTREVISTA}\n"
     "📄 Lleva INE y solicitud de empleo"
 )
@@ -205,6 +213,7 @@ ATRIBUTOS = {
     "candidato_turno": "Turno",
     "candidato_documentos": "Documentos",
     "candidato_experiencia": "Experiencia",
+    "candidato_correo": "Correo",
     "clasificacion": "Clasificación",
     "entrevista_horario": "Horario de entrevista",
     "entrevista_asistencia": "Asistencia",
@@ -224,6 +233,7 @@ NOMBRE_PASO = {
     "DOCUMENTOS": "Documentos",
     "EXPERIENCIA": "Experiencia",
     "HORARIO": "Horario",
+    "CORREO": "Correo",
     "CONFIRMACION": "Confirmación",
     "AGENDADO": "Entrevista agendada",
     "RECORDATORIO": "Recordatorio",

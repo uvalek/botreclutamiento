@@ -36,6 +36,7 @@ ATTRIBUTES = {
   'candidato_turno' => 'Turno',
   'candidato_documentos' => 'Documentos',
   'candidato_experiencia' => 'Experiencia',
+  'candidato_correo' => 'Correo',
   'clasificacion' => 'Clasificación',
   'entrevista_horario' => 'Horario de entrevista',
   'entrevista_asistencia' => 'Asistencia',

@@ -132,12 +132,12 @@ class Conf:
 # Pasos que hacen una pregunta al candidato.
 QUESTION_STATES = {
     "BIENVENIDA", "INFO", "NOMBRE", "EDAD", "MUNICIPIO", "TURNO", "DOCUMENTOS",
-    "EXPERIENCIA", "HORARIO", "HORA", "CONFIRMACION", "RECORDATORIO", "OFRECER_ASESOR",
+    "EXPERIENCIA", "HORARIO", "HORA", "CORREO", "CONFIRMACION", "RECORDATORIO", "OFRECER_ASESOR",
 }
 # Pasos de la solicitud: si el candidato deja de responder, se manda seguimiento.
 SOLICITUD_STATES = {
     "NOMBRE", "EDAD", "MUNICIPIO", "TURNO", "DOCUMENTOS", "EXPERIENCIA",
-    "HORARIO", "HORA", "CONFIRMACION",
+    "HORARIO", "HORA", "CORREO", "CONFIRMACION",
 }
 
 Result = tuple[Session, list[Action]]
@@ -416,6 +416,7 @@ def _options_for(s: Session, conf: Conf) -> list[str] | None:
         "EXPERIENCIA": V.OPC_EXPERIENCIA,
         "HORARIO": [d["day_title"] for d in cal_days(s)] if s.offered else slot_titles(s, conf),
         "HORA": [x["time"] for x in suggestions(day_slots(s))],
+        "CORREO": V.OPC_CORREO,
         "CONFIRMACION": V.OPC_CONFIRMACION,
         "RECORDATORIO": V.OPC_RECORDATORIO,
         "OFRECER_ASESOR": V.OPC_OFRECER_ASESOR,
@@ -461,9 +462,12 @@ def _question_text(s: Session, conf: Conf, reask: bool) -> str:
         dia = slots[0]["day_long"] if slots else ""
         return V.HORA_PREGUNTA.format(dia=dia, rangos=ranges_text(slots))
     if st == "CONFIRMACION":
+        correo = f" · ✉️ {d['correo']}" if d.get("correo") else ""
         return V.CONFIRMACION_PREGUNTA.format(
-            nombre=d.get("nombre", ""), horario=d.get("horario", "")
+            nombre=d.get("nombre", ""), horario=d.get("horario", ""), correo=correo
         )
+    if st == "CORREO":
+        return V.CORREO_PREGUNTA
     if st == "RECORDATORIO":
         if reask:
             return V.RECORDATORIO_REPREGUNTA
@@ -995,6 +999,8 @@ def quick_match(s: Session | None, text: str, conf: Conf) -> bool:
         return _match_municipio(text) is not None
     if s.state == "HORA":
         return resolve_hora(s, text)[0] in ("slot", "busy", "otro_dia")
+    if s.state == "CORREO":
+        return extract_email(text) is not None or _no_email(text)
     if s.state in ("AGENDADO", "CONFIRMADO", "NO_INTERESADO"):
         return False
     options = _options_for(s, conf)
@@ -1173,7 +1179,9 @@ def resolve_hora(s: Session, text: str) -> tuple[str, Any]:
 def _select_slot(s: Session, slot: dict[str, Any], conf: Conf) -> Result:
     s.data["horario"] = slot["title"]
     s.data["horario_iso"] = slot["start"]
-    return _goto(s, "CONFIRMACION", conf, attrs={"entrevista_horario": slot["title"]})
+    # Correo opcional: solo una vez por prospecto.
+    nxt = "CONFIRMACION" if s.data.get("correo_preguntado") else "CORREO"
+    return _goto(s, nxt, conf, attrs={"entrevista_horario": slot["title"]})
 
 
 def _h_dia(s: Session, text: str, conf: Conf) -> Result:
@@ -1209,3 +1217,46 @@ def _h_hora(s: Session, text: str, conf: Conf) -> Result:
 
 
 _HANDLERS["HORA"] = _h_hora
+
+
+# ---------------------------------------------------------------------------
+# v2: correo opcional para la confirmación de Cal.com
+# ---------------------------------------------------------------------------
+
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
+_NO_EMAIL = [
+    "sin correo", "no tengo", "no tengo correo", "no", "no gracias", "ninguno", "no uso",
+    "no uso correo", "asi esta bien", "mejor no", "paso", "omitir", "saltar",
+]
+
+
+def extract_email(text: str) -> str | None:
+    """Correo en el texto ('juan arroba gmail punto com' también cuenta)."""
+    t = sanitize(text)
+    t = re.sub(r"\s+arroba\s+", "@", t, flags=re.I)
+    t = re.sub(r"\s+punto\s+", ".", t, flags=re.I)
+    m = _EMAIL_RE.search(t)
+    return m.group(0).lower() if m else None
+
+
+def _no_email(text: str) -> bool:
+    n = normalize(text)
+    return n in {normalize(x) for x in _NO_EMAIL} or match_option(text, V.OPC_CORREO) == 0
+
+
+def _h_correo(s: Session, text: str, conf: Conf) -> Result:
+    email = extract_email(text)
+    if email:
+        s.data["correo"] = email
+        s.data["correo_preguntado"] = "1"
+        return _goto(s, "CONFIRMACION", conf, attrs={"candidato_correo": email})
+    if _no_email(text):
+        s.data.pop("correo", None)
+        s.data["correo_preguntado"] = "1"
+        return _goto(s, "CONFIRMACION", conf)
+    if "@" in text:
+        return s, ask(s, conf, reask=True, prefix=V.CORREO_NO_VALIDO)
+    return _not_matched(s, text, conf)
+
+
+_HANDLERS["CORREO"] = _h_correo

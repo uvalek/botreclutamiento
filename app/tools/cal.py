@@ -159,12 +159,15 @@ def normalize_phone(raw: str | None) -> str | None:
     return "+" + digits
 
 
-async def book(*, start: str, name: str, phone: str | None, ref: str) -> BookingResult:
-    """Agenda en Cal.com. `taken=True` si el horario se ocupó."""
+async def book(
+    *, start: str, name: str, phone: str | None, ref: str, email: str | None = None
+) -> BookingResult:
+    """Agenda en Cal.com. `taken=True` si el horario se ocupó.
+    `email`: el del candidato (opcional); si no, uno interno."""
     s = get_settings()
     attendee: dict[str, Any] = {
         "name": name or "Candidato",
-        "email": attendee_email(phone, ref),
+        "email": email or attendee_email(phone, ref),
         "timeZone": s.timezone,
         "language": "es",
     }

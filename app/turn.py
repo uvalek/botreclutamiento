@@ -108,12 +108,17 @@ async def _book_if_needed(
     if old:
         res = await cal.reschedule(old, iso)
     else:
-        res = await cal.book(
+        kwargs = dict(
             start=iso,
             name=s.data.get("nombre", ""),
             phone=s.data.get("telefono"),
             ref=f"{conversation_id}-{s.prospect}",
         )
+        res = await cal.book(email=s.data.get("correo") or None, **kwargs)
+        if not res.uid and not res.taken and s.data.get("correo"):
+            # Cal.com rechazó el correo del candidato: reintenta con el interno.
+            log.warning("cal_candidate_email_rejected", conversation_id=conversation_id)
+            res = await cal.book(email=None, **kwargs)
     if res.uid:
         s.data["cal_booking_uid"] = res.uid
         log.info("cal_booked", conversation_id=conversation_id, rescheduled=bool(old))
@@ -154,7 +159,7 @@ async def _humanize(
 ) -> list[E.Action] | None:
     msgs = _messages(actions)
     options = msgs[-1].options if isinstance(msgs[-1], E.SendOptions) else []
-    must_keep = [s.data.get("nombre", ""), s.data.get("horario", "")]
+    must_keep = [s.data.get("nombre", ""), s.data.get("horario", ""), s.data.get("correo", "")]
     bubbles = await redactor.rewrite(
         [m.text for m in msgs], options, user_text, history, must_keep, chat_id
     )

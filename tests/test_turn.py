@@ -225,9 +225,12 @@ async def test_calcom_rangos_y_agenda(fake, calmock):
     assert r.session.state == "HORA" and V.HORA_OCUPADA in texts(r.actions)[0]
     r = await run(r.session, "a las 3 de la tarde")
     s = r.session
-    assert s.state == "CONFIRMACION"
+    assert s.state == "CORREO"
     assert s.data["horario"] == "Jue 1 oct 3:00 pm"
-    r = await run(s, "Sí, confirmar")
+    assert [a.options for a in r.actions if isinstance(a, E.SendOptions)][-1] == ["Sin correo"]
+    r = await run(s, "Sin correo")
+    assert r.session.state == "CONFIRMACION"
+    r = await run(r.session, "Sí, confirmar")
     assert r.session.state == "AGENDADO"
     assert r.session.data["cal_booking_uid"] == "uid-123"
     assert calmock["booked"]["start"] == "2026-10-01T21:00:00.000Z"
@@ -237,7 +240,7 @@ async def test_calcom_dia_y_hora_de_una_vez(fake, calmock):
     s = await at_state(["hola", "1", "Juan Pérez", "27", "Apizaco", "Matutino", "Sí, todos"])
     r = await run(s, "Más de 6 meses")
     r = await run(r.session, "el jueves a las 10:30")
-    assert r.session.state == "CONFIRMACION"
+    assert r.session.state == "CORREO"
     assert r.session.data["horario"] == "Jue 1 oct 10:30 am"
 
 
@@ -246,6 +249,7 @@ async def test_calcom_horario_ocupado_al_confirmar(fake, calmock):
     r = await run(s, "Más de 6 meses")
     r = await run(r.session, "1")
     r = await run(r.session, "9:00 am")
+    r = await run(r.session, "Sin correo")
     calmock["uid"] = None  # alguien lo ganó
     calmock["taken"] = True
     r = await run(r.session, "Sí, confirmar")
@@ -290,6 +294,7 @@ async def test_calcom_error_distinto_no_atora(fake, calmock):
     r = await run(s, "Más de 6 meses")
     r = await run(r.session, "1")
     r = await run(r.session, "9:00 am")
+    r = await run(r.session, "no")
     calmock["uid"] = None  # p. ej. correo rechazado: NO es horario ocupado
     r = await run(r.session, "Sí, confirmar")
     assert r.session.state == "AGENDADO"
@@ -300,3 +305,58 @@ def test_correo_del_candidato():
     assert cal.attendee_email("+522411234567", "x") == "adlekcontact+wa522411234567@gmail.com"
     assert cal._is_taken(400, '{"message":"User either already has booking at this time or is not available"}')
     assert not cal._is_taken(400, '{"message":"email_domain_cannot_receive_mail"}')
+
+
+async def test_correo_opcional_y_reserva_con_correo(fake, calmock):
+    s = await at_state(["hola", "1", "Juan Pérez", "27", "Apizaco", "Matutino", "Sí, todos"])
+    r = await run(s, "Más de 6 meses")
+    r = await run(r.session, "el jueves a las 10")
+    r = await run(r.session, "claro, es Juan.Perez@Gmail.com")
+    s = r.session
+    assert s.state == "CONFIRMACION"
+    assert s.data["correo"] == "juan.perez@gmail.com"
+    assert "juan.perez@gmail.com" in texts(r.actions)[-1]
+    r = await run(s, "Sí, confirmar")
+    assert calmock["booked"]["email"] == "juan.perez@gmail.com"
+    # Reagendar no vuelve a pedir correo
+    r.session.state = "RECORDATORIO"
+    r = await run(r.session, "2")
+    r = await run(r.session, "1")
+    r = await run(r.session, "9:00 am")
+    assert r.session.state == "CONFIRMACION"
+
+
+async def test_correo_rechazado_reintenta_con_interno(fake, monkeypatch):
+    monkeypatch.setattr(cal, "ready", lambda: True)
+    calls = []
+
+    async def slots():
+        return _slots_jueves()
+
+    async def book(**kw):
+        calls.append(kw.get("email"))
+        return cal.BookingResult(uid=None if kw.get("email") else "uid-ok")
+
+    monkeypatch.setattr(cal, "get_slots", slots)
+    monkeypatch.setattr(cal, "book", book)
+    s = await at_state(["hola", "1", "Juan Pérez", "27", "Apizaco", "Matutino", "Sí, todos"])
+    r = await run(s, "Más de 6 meses")
+    r = await run(r.session, "el jueves a las 10")
+    r = await run(r.session, "juan arroba gmail punto com")
+    r = await run(r.session, "si")
+    assert calls == ["juan@gmail.com", None]
+    assert r.session.data["cal_booking_uid"] == "uid-ok"
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("juan.perez@gmail.com", "juan.perez@gmail.com"),
+        ("mi correo es Ana_R@hotmail.com.mx", "ana_r@hotmail.com.mx"),
+        ("juan arroba gmail punto com", "juan@gmail.com"),
+        ("juan@gmail", None),
+        ("no tengo", None),
+    ],
+)
+def test_extract_email(text, expected):
+    assert E.extract_email(text) == expected

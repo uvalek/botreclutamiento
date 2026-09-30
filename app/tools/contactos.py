@@ -39,6 +39,7 @@ def row_for(chat_id: str, conversation_id: int, state: str, data: dict[str, str]
         "vacante": vacante.VACANTE_RESUMEN,
         "nombre": data.get("nombre"),
         "telefono": data.get("telefono"),
+        "correo": data.get("correo") or None,
         "edad_rango": data.get("edad"),
         "municipio": rules.municipio_display(data) or None,
         "turno": data.get("turno"),
