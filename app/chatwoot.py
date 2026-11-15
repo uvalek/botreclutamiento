@@ -176,10 +176,19 @@ _CLIENT: ChatwootClient | None = None
 
 
 def get_client() -> ChatwootClient:
+    """Cliente del canal activo: CRM de Adlek si CRM_API_KEY está definida,
+    si no, Chatwoot. Los dos tienen los mismos métodos."""
     global _CLIENT
     if _CLIENT is None:
         s = get_settings()
-        _CLIENT = ChatwootClient(s.chatwoot_base_url, s.chatwoot_account_id, s.chatwoot_bot_token)
+        if s.use_crm:
+            from app.crm import CrmClient
+
+            _CLIENT = CrmClient(s.crm_api_base, s.crm_api_key, handoff_tag=s.crm_handoff_tag)
+        else:
+            _CLIENT = ChatwootClient(
+                s.chatwoot_base_url, s.chatwoot_account_id, s.chatwoot_bot_token
+            )
     return _CLIENT
 
 

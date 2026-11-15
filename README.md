@@ -1,5 +1,7 @@
 # Bot de reclutamiento (demo Adlek)
 
+> **Rama `crm` (15 nov 2026):** el bot ya se conecta al **CRM de Adlek** (`app.adlek.com.mx`) en lugar de Chatwoot. Ver **[docs/CRM.md](docs/CRM.md)**. Con `CRM_API_KEY` definida usa el CRM; sin ella, Chatwoot como abajo.
+
 Chatbot guiado para reclutar personal operativo. Es una demo para el **Foro Automotriz Tlaxcala 2026** con una empresa ficticia, *Componentes del Centro*.
 
 El candidato escribe al WhatsApp demo (+52 241 279 0966). Chatwoot le pasa cada mensaje a este bot como **Agent Bot**, y el bot responde por la API de Chatwoot. Nunca usa la Graph API de Meta. Recursos Humanos ve el resultado en Chatwoot (etiquetas, atributos y una nota privada).

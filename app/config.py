@@ -30,6 +30,19 @@ class Settings(BaseSettings):
     # Tolerancia de reloj para la firma (segundos).
     signature_max_age_seconds: int = 300
 
+    # --- CRM de Adlek ------------------------------------------------------
+    # Si CRM_API_KEY está definida, el bot habla con el CRM (app.adlek.com.mx)
+    # en lugar de Chatwoot: recibe en POST /webhooks/crm y contesta por la
+    # API pública del CRM. Ver docs/CRM.md.
+    crm_api_base: str = "https://app.adlek.com.mx/api/v1"
+    # Llave de API de la clínica (Configuración → Llaves de API en el CRM).
+    crm_api_key: str = ""
+    # "secret" (whsec_…) que devolvió el CRM al registrar el webhook.
+    crm_webhook_secret: str = ""
+    # Etiqueta que pone el bot al pasar a un humano. Mientras el contacto la
+    # tenga (o alguien del equipo se asigne la conversación), el bot se calla.
+    crm_handoff_tag: str = "requiere-humano"
+
     # --- Demo -------------------------------------------------------------
     # Tres horarios de entrevista separados por "|". Máximo 20 caracteres
     # cada uno (límite de los botones de WhatsApp).
@@ -95,8 +108,12 @@ class Settings(BaseSettings):
         return [s.strip() for s in self.interview_slots.split("|") if s.strip()]
 
     @property
+    def use_crm(self) -> bool:
+        return bool(self.crm_api_key)
+
+    @property
     def dry_run(self) -> bool:
-        return not self.chatwoot_bot_token
+        return not (self.crm_api_key or self.chatwoot_bot_token)
 
     @property
     def ai_ready(self) -> bool:

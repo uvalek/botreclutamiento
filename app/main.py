@@ -14,7 +14,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app import processor, rag
+from app import crm, processor, rag
 from app.chatwoot import fits_interactive, get_client
 from app.config import get_settings
 from app.store import get_store
@@ -29,7 +29,7 @@ log = structlog.get_logger(__name__)
 
 # Se sube a mano en cada cambio importante para confirmar que EasyPanel
 # redeployó (GET /version).
-_VERSION = "v2.5-sede-centro-convenciones-2026-09-29"
+_VERSION = "v2.6-crm-adlek-2026-11-15"
 
 
 @asynccontextmanager
@@ -45,9 +45,12 @@ async def lifespan(_: FastAPI):
         reminder_s=settings.reminder_delay_seconds,
         followup_s=settings.followup_delay_seconds,
     )
+    log.info("channel", channel="crm" if settings.use_crm else "chatwoot")
     if settings.dry_run:
-        log.warning("chatwoot_token_missing_dry_run")
-    if not settings.webhook_key and not settings.chatwoot_webhook_secret:
+        log.warning("no_channel_token_dry_run")
+    if settings.use_crm and not settings.crm_webhook_secret:
+        log.warning("webhook_unprotected_set_CRM_WEBHOOK_SECRET")
+    if not settings.use_crm and not settings.webhook_key and not settings.chatwoot_webhook_secret:
         log.warning("webhook_unprotected_set_CHATWOOT_WEBHOOK_SECRET")
     if len(settings.slots) < 1 or not fits_interactive(settings.slots):
         log.warning("interview_slots_will_use_text", slots=settings.slots)
@@ -113,6 +116,7 @@ async def health() -> dict[str, str]:
 async def version() -> dict[str, object]:
     return {
         "version": _VERSION,
+        "channel": "crm" if settings.use_crm else "chatwoot",
         "dry_run": settings.dry_run,
         "ai": settings.ai_ready,
         "supabase": settings.supabase_ready,
@@ -153,3 +157,36 @@ async def chatwoot_webhook(request: Request, key: str | None = None) -> dict[str
     if status not in ("ignored_event", "not_incoming", "private"):
         log.info("webhook_in", result=status)
     return {"status": status}
+
+
+async def _accept_crm_safely(payload: dict) -> None:
+    try:
+        result = await processor.accept_crm(payload)
+        if result not in ("ignored_event", "reaction"):
+            log.info("crm_webhook_in", result=result)
+    except Exception as e:  # noqa: BLE001
+        log.exception("crm_webhook_failed", error=str(e))
+
+
+@app.post("/webhooks/crm")
+async def crm_webhook(request: Request) -> dict[str, str]:
+    """Avisos del CRM de Adlek (`message.received`). Se responde de inmediato
+    (el CRM espera poco y no reintenta) y se procesa en segundo plano."""
+    body = await request.body()
+    secret = settings.crm_webhook_secret
+    if secret and not crm.valid_signature(
+        secret,
+        body,
+        request.headers.get("x-wacrm-signature"),
+        settings.signature_max_age_seconds,
+    ):
+        log.warning("crm_webhook_bad_signature")
+        raise HTTPException(status_code=403, detail="invalid signature")
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid json") from None
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="invalid payload")
+    spawn(_accept_crm_safely(payload))
+    return {"status": "accepted"}

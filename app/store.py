@@ -47,6 +47,15 @@ create table if not exists buffer (
     created_at      real    not null
 );
 create index if not exists jobs_conv_idx on jobs (conversation_id, kind, status);
+-- CRM de Adlek: sus conversaciones tienen ids UUID; el bot trabaja con
+-- enteros (como Chatwoot). Esta tabla da a cada UUID un entero fijo.
+create table if not exists crm_conversations (
+    id         integer primary key autoincrement,
+    uuid       text    not null unique,
+    contact_id text,
+    phone      text,
+    updated_at real    not null
+);
 """
 
 
@@ -214,6 +223,38 @@ class Store:
             except ValueError:
                 continue
         return out
+
+
+    # --- CRM de Adlek: UUID de conversación ⇄ entero del bot ------------------
+
+    def crm_conversation_int(
+        self, uuid: str, contact_id: str | None = None, phone: str | None = None
+    ) -> int:
+        """Entero fijo para una conversación del CRM (la crea si no existe)."""
+        with self._lock:
+            self._conn.execute(
+                "insert into crm_conversations (uuid, contact_id, phone, updated_at) "
+                "values (?, ?, ?, ?) on conflict(uuid) do update set "
+                "contact_id = coalesce(excluded.contact_id, crm_conversations.contact_id), "
+                "phone = coalesce(excluded.phone, crm_conversations.phone), "
+                "updated_at = excluded.updated_at",
+                (uuid, contact_id, phone, time.time()),
+            )
+            row = self._conn.execute(
+                "select id from crm_conversations where uuid = ?", (uuid,)
+            ).fetchone()
+        return int(row[0])
+
+    def crm_conversation(self, conversation_id: int) -> dict | None:
+        """{uuid, contact_id, phone} de un entero del bot, o None."""
+        with self._lock:
+            row = self._conn.execute(
+                "select uuid, contact_id, phone from crm_conversations where id = ?",
+                (conversation_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return {"uuid": row[0], "contact_id": row[1], "phone": row[2]}
 
 
 _STORE: Store | None = None

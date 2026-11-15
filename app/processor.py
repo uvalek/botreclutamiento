@@ -124,6 +124,76 @@ def accept(payload: dict[str, Any]) -> str:
     msg, reason = parse_event(payload)
     if msg is None:
         return reason
+    return accept_incoming(msg)
+
+
+# --- CRM de Adlek ------------------------------------------------------------
+
+# Tipos del CRM que el bot lee como texto. Audio se transcribe; reacciones se
+# ignoran; lo demás (foto, video, documento, sticker…) es "solo leo texto".
+_CRM_TEXT_TYPES = {"text", "interactive", "button"}
+
+
+async def accept_crm(payload: dict[str, Any]) -> str:
+    """Aviso `message.received` del CRM → mensaje entrante del bot.
+
+    A diferencia de Chatwoot, el aviso no trae el teléfono ni el estado, así
+    que se piden a la API del CRM (por eso es async y corre en segundo plano).
+    """
+    from app.crm import message_int_id
+
+    if not isinstance(payload, dict) or payload.get("event") != "message.received":
+        return "ignored_event"
+    data = payload.get("data") or {}
+    conv_uuid = data.get("conversation_id")
+    contact_id = data.get("contact_id")
+    wamid = data.get("whatsapp_message_id") or payload.get("id")
+    if not isinstance(conv_uuid, str) or not isinstance(wamid, str):
+        return "missing_ids"
+    content_type = str(data.get("content_type") or "text")
+    if content_type == "reaction":
+        return "reaction"
+
+    store = get_store()
+    client = get_client()
+    conv_int = store.crm_conversation_int(conv_uuid, contact_id)
+    known = store.crm_conversation(conv_int)
+    phone = known.get("phone") if known else None
+    if not phone and isinstance(contact_id, str) and hasattr(client, "get_contact"):
+        contact = await client.get_contact(contact_id)
+        phone = (contact or {}).get("phone")
+        if phone:
+            store.crm_conversation_int(conv_uuid, contact_id, phone)
+
+    audio_urls: list[str] = []
+    has_media = False
+    text = ""
+    if content_type in _CRM_TEXT_TYPES:
+        text = sanitize(data.get("text") or "")
+    elif content_type == "audio" and hasattr(client, "get_message_media_url"):
+        url = await client.get_message_media_url(conv_uuid, wamid)
+        if url:
+            audio_urls.append(url)
+        else:
+            has_media = True
+    else:
+        has_media = True
+
+    status = await client.get_status(conv_int) or "pending"
+    msg = Incoming(
+        conversation_id=conv_int,
+        message_id=message_int_id(wamid),
+        status=status,
+        text=text,
+        has_media=has_media,
+        audio_urls=audio_urls,
+        phone=phone,
+    )
+    return accept_incoming(msg)
+
+
+def accept_incoming(msg: Incoming) -> str:
+    """Descarta repetidos, aplica el límite por conversación y encola."""
     store = get_store()
     if not store.mark_processed(msg.message_id):
         return "duplicate"
@@ -279,6 +349,10 @@ async def _conversation_is_ours(conversation_id: int) -> bool:
     la conversación es de la bandeja del bot (evita payloads falsificados)."""
     client = get_client()
     if getattr(client, "dry_run", False):
+        return True
+    if getattr(client, "channel", None) == "crm":
+        # La llave de API del CRM solo ve su propia clínica y el aviso viene
+        # firmado: la conversación es nuestra por construcción.
         return True
     conv = await client.get_conversation(conversation_id)
     if conv is None:
